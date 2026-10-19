@@ -1,0 +1,383 @@
+diff --git a/Wabbajack.Common/JackifyConfig.cs b/Wabbajack.Common/JackifyConfig.cs
+index 3577453..d53cf2c 100644
+--- a/Wabbajack.Common/JackifyConfig.cs
++++ b/Wabbajack.Common/JackifyConfig.cs
+@@ -35,6 +35,10 @@ public static class JackifyConfig
+ 
+     private static AbsolutePath ResolveDataDirectory()
+     {
++        // SkyrimMT (macOS): keep the engine's prefix/cache inside SkyrimMT's own folder
++        if (Environment.GetEnvironmentVariable("JACKIFY_DATA_DIR") is { Length: > 0 } envDir)
++            return envDir.ToAbsolutePath();
++
+         try
+         {
+             var home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+diff --git a/Wabbajack.Common/ProtonDetector.cs b/Wabbajack.Common/ProtonDetector.cs
+index 8e5e065..bab2f21 100755
+--- a/Wabbajack.Common/ProtonDetector.cs
++++ b/Wabbajack.Common/ProtonDetector.cs
+@@ -67,6 +67,13 @@ public class ProtonDetector
+ 
+     private async Task<string?> ResolveProtonWrapperPathAsync()
+     {
++        // SkyrimMT (macOS): a "proton run <exe> …" compatible shim around SkyrimMT's own Wine runtime
++        if (Environment.GetEnvironmentVariable("SKYRIMMT_WINE_SHIM") is { Length: > 0 } shim && File.Exists(shim))
++        {
++            _logger.LogDebug("Using SkyrimMT Wine shim at {Shim}", shim);
++            return shim;
++        }
++
+         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+         {
+             _logger.LogDebug("Running on Windows, no Proton needed");
+diff --git a/Wabbajack.Downloaders.GameFile/GameLocator.cs b/Wabbajack.Downloaders.GameFile/GameLocator.cs
+index dddd96c..689eeb8 100644
+--- a/Wabbajack.Downloaders.GameFile/GameLocator.cs
++++ b/Wabbajack.Downloaders.GameFile/GameLocator.cs
+@@ -191,6 +191,14 @@ public class GameLocator : IGameLocator
+     {
+         var metaData = game.MetaData();
+ 
++        // SkyrimMT (macOS): the game lives in SkyrimMT's Wine prefix (or a pinned version folder), not a native store
++        if (Environment.GetEnvironmentVariable("WABBAJACK_GAME_DIR_" + game.ToString().ToUpperInvariant()) is { Length: > 0 } dir
++            && Directory.Exists(dir))
++        {
++            path = dir.ToAbsolutePath();
++            return true;
++        }
++
+         foreach (var id in metaData.SteamIDs)
+         {
+             if (!_steamGames.TryGetValue(AppId.From((uint)id), out var found)) continue;
+diff --git a/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs b/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs
+index b0f73e7..7486289 100644
+--- a/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs
++++ b/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs
+@@ -1,4 +1,6 @@
+-﻿using System.Data.SQLite;
++using System.Threading.Tasks;
++using System.Threading;
++﻿using Microsoft.Data.Sqlite;   // SkyrimMT: has a native osx-arm64 library (the previous package ships osx-x64 only)
+ using System.Text.Json;
+ using Microsoft.Extensions.Logging;
+ using Wabbajack.DTOs;
+@@ -14,7 +16,20 @@ public class VerificationCache : IVerificationCache, IDisposable
+ {
+     private readonly AbsolutePath _location;
+     private readonly string _connectionString;
+-    private readonly SQLiteConnection _conn;
++    private readonly SqliteConnection _conn;
++
++    // SkyrimMT: Microsoft.Data.Sqlite connections are not thread-safe. Parallel hashing shared this one connection and
++    // crashed (NullReferenceException in SqliteConnection.RemoveCommand, A Dragonborn's Fate, 123 archives). Every
++    // command now holds the connection until it is disposed (its reader included).
++    private readonly SemaphoreSlim _dbLock = new(1, 1);
++    private SqliteCommand Locked() { _dbLock.Wait(); return new LockedSqliteCommand(_conn, _dbLock); }
++    private async Task<SqliteCommand> LockedAsync() { await _dbLock.WaitAsync(); return new LockedSqliteCommand(_conn, _dbLock); }
++    private sealed class LockedSqliteCommand : SqliteCommand
++    {
++        private SemaphoreSlim? _lock;
++        public LockedSqliteCommand(SqliteConnection c, SemaphoreSlim l) : base(null, c) { _lock = l; }
++        protected override void Dispose(bool disposing) { base.Dispose(disposing); Interlocked.Exchange(ref _lock, null)?.Release(); }
++    }
+     private readonly TimeSpan _expiry;
+     private readonly ILogger<VerificationCache> _logger;
+     private readonly DTOSerializer _dtos;
+@@ -30,12 +45,13 @@ public class VerificationCache : IVerificationCache, IDisposable
+             _location.Parent.CreateDirectory();
+ 
+         _connectionString =
+-            string.Intern($"URI=file:{_location};Pooling=True;Max Pool Size=100; Journal Mode=Memory;");
+-        _conn = new SQLiteConnection(_connectionString);
++            string.Intern($"Data Source={_location};Pooling=True");
++        _conn = new SqliteConnection(_connectionString);
+         _conn.Open();
++        using (var pragma = _conn.CreateCommand()) { pragma.CommandText = "PRAGMA journal_mode=MEMORY;"; pragma.ExecuteNonQuery(); }
+ 
+ 
+-        using var cmd = new SQLiteCommand(_conn);
++        using var cmd = Locked();
+         cmd.CommandText = @"CREATE TABLE IF NOT EXISTS VerficationCache (
+             PKS TEXT PRIMARY KEY,
+             LastModified BIGINT,
+@@ -48,7 +64,7 @@ public class VerificationCache : IVerificationCache, IDisposable
+     {
+         var key = archive.PrimaryKeyString;
+ 
+-        await using var cmd = new SQLiteCommand(_conn);
++        await using var cmd = await LockedAsync();
+         cmd.CommandText = "SELECT LastModified, State FROM VerficationCache WHERE PKS = @pks";
+         cmd.Parameters.AddWithValue("@pks", key);
+         await cmd.PrepareAsync();
+@@ -70,7 +86,7 @@ public class VerificationCache : IVerificationCache, IDisposable
+         var key = state.PrimaryKeyString;
+         if (valid)
+         {
+-            await using var cmd = new SQLiteCommand(_conn);
++            await using var cmd = await LockedAsync();
+             cmd.CommandText = @"INSERT INTO VerficationCache (PKS, LastModified, State) VALUES (@pks, @lastModified, @state)
+             ON CONFLICT(PKS) DO UPDATE SET LastModified = @lastModified, State = @state";
+             cmd.Parameters.AddWithValue("@pks", key);
+@@ -83,7 +99,7 @@ public class VerificationCache : IVerificationCache, IDisposable
+         else
+         {
+             _logger.LogInformation("Marking {Key} as invalid", key);
+-            await using var cmd = new SQLiteCommand(_conn);
++            await using var cmd = await LockedAsync();
+             cmd.CommandText = @"DELETE FROM VerficationCache WHERE PKS = @pks";
+             cmd.Parameters.AddWithValue("@pks", state.PrimaryKeyString);
+             await cmd.PrepareAsync();
+diff --git a/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj b/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj
+index bac607b..f8e81ec 100644
+--- a/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj
++++ b/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj
+@@ -15,7 +15,7 @@
+       <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.1" />
+       <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.1" />
+       <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.1" />
+-      <PackageReference Include="Stub.System.Data.SQLite.Core.NetStandard" Version="1.0.119" />
++      <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+     </ItemGroup>
+ 
+ </Project>
+diff --git a/Wabbajack.Installer/AInstaller.cs b/Wabbajack.Installer/AInstaller.cs
+index 02b0763..33c0f7b 100644
+--- a/Wabbajack.Installer/AInstaller.cs
++++ b/Wabbajack.Installer/AInstaller.cs
+@@ -825,7 +825,8 @@ public abstract class AInstaller<T>
+         // the manual download protocol. Check once upfront so we never call the CDN URL API
+         // for a non-premium account — not even a failed attempt.
+         var nexusApi = _serviceProvider.GetService<NexusApi>();
+-        if (nexusApi != null && !await nexusApi.IsPremium(token))
++        // SkyrimMT: only ask Nexus when Nexus archives actually need downloading (no key needed otherwise)
++        if (nexusApi != null && nonManualArchives.Any(a => a.State is DTOs.DownloadStates.Nexus) && !await nexusApi.IsPremium(token))
+         {
+             _logger.LogInformation("Nexus account is non-premium — routing all Nexus archives to manual download protocol");
+             var nexusArchives = nonManualArchives.Where(a => a.State is DTOs.DownloadStates.Nexus).ToList();
+diff --git a/Wabbajack.VFS/FileHashCache.cs b/Wabbajack.VFS/FileHashCache.cs
+index 9f685f7..48e1cc0 100644
+--- a/Wabbajack.VFS/FileHashCache.cs
++++ b/Wabbajack.VFS/FileHashCache.cs
+@@ -1,4 +1,4 @@
+-using System.Data.SQLite;
++using Microsoft.Data.Sqlite;   // SkyrimMT: has a native osx-arm64 library (the previous package ships osx-x64 only)
+ using System.IO;
+ using System.Threading;
+ using System.Threading.Tasks;
+@@ -11,7 +11,20 @@ namespace Wabbajack.VFS;
+ 
+ public class FileHashCache
+ {
+-    private readonly SQLiteConnection _conn;
++    private readonly SqliteConnection _conn;
++
++    // SkyrimMT: Microsoft.Data.Sqlite connections are not thread-safe. Parallel hashing shared this one connection and
++    // crashed (NullReferenceException in SqliteConnection.RemoveCommand, A Dragonborn's Fate, 123 archives). Every
++    // command now holds the connection until it is disposed (its reader included).
++    private readonly SemaphoreSlim _dbLock = new(1, 1);
++    private SqliteCommand Locked() { _dbLock.Wait(); return new LockedSqliteCommand(_conn, _dbLock); }
++    private async Task<SqliteCommand> LockedAsync() { await _dbLock.WaitAsync(); return new LockedSqliteCommand(_conn, _dbLock); }
++    private sealed class LockedSqliteCommand : SqliteCommand
++    {
++        private SemaphoreSlim? _lock;
++        public LockedSqliteCommand(SqliteConnection c, SemaphoreSlim l) : base(null, c) { _lock = l; }
++        protected override void Dispose(bool disposing) { base.Dispose(disposing); Interlocked.Exchange(ref _lock, null)?.Release(); }
++    }
+     private readonly string _connectionString;
+     private readonly IResource<FileHashCache> _limiter;
+     private readonly AbsolutePath _location;
+@@ -25,12 +38,13 @@ public class FileHashCache
+             _location.Parent.CreateDirectory();
+ 
+         _connectionString =
+-            string.Intern($"URI=file:{_location};Pooling=True;Max Pool Size=100; Journal Mode=Memory;");
+-        _conn = new SQLiteConnection(_connectionString);
++            string.Intern($"Data Source={_location};Pooling=True");
++        _conn = new SqliteConnection(_connectionString);
+         _conn.Open();
++        using (var pragma = _conn.CreateCommand()) { pragma.CommandText = "PRAGMA journal_mode=MEMORY;"; pragma.ExecuteNonQuery(); }
+ 
+ 
+-        using var cmd = new SQLiteCommand(_conn);
++        using var cmd = Locked();
+         cmd.CommandText = @"CREATE TABLE IF NOT EXISTS HashCache (
+             Path TEXT PRIMARY KEY,
+             LastModified BIGINT,
+@@ -41,7 +55,7 @@ public class FileHashCache
+ 
+     private async Task<(AbsolutePath Path, long LastModified, Hash Hash)> Get(AbsolutePath path)
+     {
+-        using var cmd = new SQLiteCommand(_conn);
++        await using var cmd = await LockedAsync();
+         cmd.CommandText = "SELECT LastModified, Hash FROM HashCache WHERE Path = @path";
+         cmd.Parameters.AddWithValue("@path", path.ToString().ToLowerInvariant());
+         await cmd.PrepareAsync();
+@@ -54,7 +68,7 @@ public class FileHashCache
+ 
+     public void Purge(AbsolutePath path)
+     {
+-        using var cmd = new SQLiteCommand(_conn);
++        using var cmd = Locked();
+         cmd.CommandText = "DELETE FROM HashCache WHERE Path = @path";
+         cmd.Parameters.AddWithValue("@path", path.ToString().ToLowerInvariant());
+         cmd.PrepareAsync();
+@@ -64,7 +78,7 @@ public class FileHashCache
+ 
+     private async Task Upsert(AbsolutePath path, long lastModified, Hash hash)
+     {
+-        await using var cmd = new SQLiteCommand(_conn);
++        await using var cmd = await LockedAsync();
+         cmd.CommandText = @"INSERT INTO HashCache (Path, LastModified, Hash) VALUES (@path, @lastModified, @hash)
+             ON CONFLICT(Path) DO UPDATE SET LastModified = @lastModified, Hash = @hash";
+         cmd.Parameters.AddWithValue("@path", path.ToString().ToLowerInvariant());
+@@ -77,7 +91,7 @@ public class FileHashCache
+ 
+     public void VacuumDatabase()
+     {
+-        using var cmd = new SQLiteCommand(_conn);
++        using var cmd = Locked();
+         cmd.CommandText = @"VACUUM";
+         cmd.PrepareAsync();
+ 
+diff --git a/Wabbajack.VFS/VFSCache.cs b/Wabbajack.VFS/VFSCache.cs
+index 421a1ff..504d044 100644
+--- a/Wabbajack.VFS/VFSCache.cs
++++ b/Wabbajack.VFS/VFSCache.cs
+@@ -1,7 +1,7 @@
+ using System;
+ using System.Collections.Immutable;
+ using System.Data;
+-using System.Data.SQLite;
++using Microsoft.Data.Sqlite;   // SkyrimMT: has a native osx-arm64 library (the previous package ships osx-x64 only)
+ using System.IO;
+ using System.Linq;
+ using System.Threading;
+@@ -18,7 +18,20 @@ namespace Wabbajack.VFS;
+ 
+ public class VFSDiskCache : IVfsCache
+ {
+-    private readonly SQLiteConnection _conn;
++    private readonly SqliteConnection _conn;
++
++    // SkyrimMT: Microsoft.Data.Sqlite connections are not thread-safe. Parallel hashing shared this one connection and
++    // crashed (NullReferenceException in SqliteConnection.RemoveCommand, A Dragonborn's Fate, 123 archives). Every
++    // command now holds the connection until it is disposed (its reader included).
++    private readonly SemaphoreSlim _dbLock = new(1, 1);
++    private SqliteCommand Locked() { _dbLock.Wait(); return new LockedSqliteCommand(_conn, _dbLock); }
++    private async Task<SqliteCommand> LockedAsync() { await _dbLock.WaitAsync(); return new LockedSqliteCommand(_conn, _dbLock); }
++    private sealed class LockedSqliteCommand : SqliteCommand
++    {
++        private SemaphoreSlim? _lock;
++        public LockedSqliteCommand(SqliteConnection c, SemaphoreSlim l) : base(null, c) { _lock = l; }
++        protected override void Dispose(bool disposing) { base.Dispose(disposing); Interlocked.Exchange(ref _lock, null)?.Release(); }
++    }
+     private readonly string _connectionString;
+     private readonly AbsolutePath _path;
+ 
+@@ -29,11 +42,12 @@ public class VFSDiskCache : IVfsCache
+         if (!_path.Parent.DirectoryExists())
+             _path.Parent.CreateDirectory();
+ 
+-        _connectionString = string.Intern($"URI=file:{path};Pooling=True;Max Pool Size=100; Journal Mode=Memory;");
+-        _conn = new SQLiteConnection(_connectionString);
++        _connectionString = string.Intern($"Data Source={path};Pooling=True");
++        _conn = new SqliteConnection(_connectionString);
+         _conn.Open();
++        using (var pragma = _conn.CreateCommand()) { pragma.CommandText = "PRAGMA journal_mode=MEMORY;"; pragma.ExecuteNonQuery(); }
+ 
+-        using var cmd = new SQLiteCommand(_conn);
++        using var cmd = Locked();
+         cmd.CommandText = @"CREATE TABLE IF NOT EXISTS VFSCache (
+             Hash BIGINT PRIMARY KEY,
+             Contents BLOB)
+@@ -46,7 +60,7 @@ public class VFSDiskCache : IVfsCache
+         if (hash == default)
+             throw new ArgumentException("Cannot cache default hashes");
+ 
+-        await using var cmd = new SQLiteCommand(_conn);
++        await using var cmd = await LockedAsync();
+         cmd.CommandText = @"SELECT Contents FROM VFSCache WHERE Hash = @hash";
+         cmd.Parameters.AddWithValue("@hash", (long) hash);
+ 
+@@ -73,7 +87,7 @@ public class VFSDiskCache : IVfsCache
+ 
+     public async Task Clean()
+     {
+-        await using var cmd = new SQLiteCommand(_conn);
++        await using var cmd = await LockedAsync();
+         cmd.CommandText = @"VACUUM";
+         await cmd.PrepareAsync();
+ 
+@@ -82,18 +96,18 @@ public class VFSDiskCache : IVfsCache
+ 
+     private async Task InsertIntoVFSCache(Hash hash, MemoryStream data)
+     {
+-        await using var cmd = new SQLiteCommand(_conn);
++        await using var cmd = await LockedAsync();
+         cmd.CommandText = @"INSERT INTO VFSCache (Hash, Contents) VALUES (@hash, @contents)";
+         cmd.Parameters.AddWithValue("@hash", (long) hash);
+-        var val = new SQLiteParameter("@contents", DbType.Binary) {Value = data.ToArray()};
++        var val = new SqliteParameter("@contents", SqliteType.Blob) {Value = data.ToArray()};
+         cmd.Parameters.Add(val);
+         try
+         {
+             await cmd.ExecuteNonQueryAsync();
+         }
+-        catch (SQLiteException ex)
++        catch (SqliteException ex)
+         {
+-            if (ex.Message.StartsWith("constraint failed"))
++            if (ex.SqliteErrorCode == 19)   // SQLITE_CONSTRAINT
+                 return;
+             throw;
+         }
+@@ -101,7 +115,7 @@ public class VFSDiskCache : IVfsCache
+ 
+     public void VacuumDatabase()
+     {
+-        using var cmd = new SQLiteCommand(_conn);
++        using var cmd = Locked();
+         cmd.CommandText = @"VACUUM";
+         cmd.PrepareAsync();
+ 
+diff --git a/Wabbajack.VFS/Wabbajack.VFS.csproj b/Wabbajack.VFS/Wabbajack.VFS.csproj
+index 7020581..e1531c8 100644
+--- a/Wabbajack.VFS/Wabbajack.VFS.csproj
++++ b/Wabbajack.VFS/Wabbajack.VFS.csproj
+@@ -17,7 +17,7 @@
+         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.1" />
+         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.1" />
+         <PackageReference Include="SixLabors.ImageSharp" Version="3.1.6" />
+-        <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" PrivateAssets="None" />
++        <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+     </ItemGroup>
+ 
+     <ItemGroup>
+diff --git a/global.json b/global.json
+index 22e1b9b..b8d16ca 100644
+--- a/global.json
++++ b/global.json
+@@ -1,5 +1,6 @@
+ {
+   "sdk": {
+-    "version": "8.0.108"
++    "version": "8.0.108",
++    "rollForward": "latestMajor"
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/jackify-engine/Verbs/Install.cs b/jackify-engine/Verbs/Install.cs
+index 9f05c3d..ebe9c9b 100644
+--- a/jackify-engine/Verbs/Install.cs
++++ b/jackify-engine/Verbs/Install.cs
+@@ -154,7 +154,7 @@ public class Install
+         {
+             var (errType, errMsg) = StructuredError.Classify(ex);
+             if (errType == null) return 1; // cancelled
+-            _logger.LogError("Installation failed: {Message}", ex.Message);
++            _logger.LogError(ex, "Installation failed: {Message}", ex.Message);   // SkyrimMT: keep the stack trace in the log
+             StructuredError.WriteError(errType, errMsg);
+             return StructuredError.ExitCodeFor(errType);
+         }

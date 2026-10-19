@@ -1,0 +1,391 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c990b0fd..31bdc2fe 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -50,7 +50,7 @@ endif()
+ 
+ find_package(OpenGL REQUIRED)
+ find_package(Threads REQUIRED)
+-if(UNIX AND NOT APPLE)
++if(UNIX)
+ 	find_package(GLEW REQUIRED)
+ endif()
+ 
+@@ -67,7 +67,7 @@ elseif(OPENGL_GLU_FOUND AND OPENGL_glu_LIBRARY)
+ endif()
+ 
+ set(BSOS_GLEW_LIBRARY)
+-if(UNIX AND NOT APPLE)
++if(UNIX)
+ 	if(TARGET GLEW::GLEW)
+ 		set(BSOS_GLEW_LIBRARY GLEW::GLEW)
+ 	else()
+@@ -557,7 +557,7 @@ function(bsos_configure_target target)
+ 	if(NOT TARGET OpenGL::GL AND OPENGL_INCLUDE_DIR)
+ 		target_include_directories(${target} SYSTEM PRIVATE ${OPENGL_INCLUDE_DIR})
+ 	endif()
+-	if(UNIX AND NOT APPLE AND NOT TARGET GLEW::GLEW AND GLEW_INCLUDE_DIRS)
++	if(UNIX AND NOT TARGET GLEW::GLEW AND GLEW_INCLUDE_DIRS)
+ 		target_include_directories(${target} SYSTEM PRIVATE ${GLEW_INCLUDE_DIRS})
+ 	endif()
+ 	target_compile_definitions(${target} PRIVATE ${BSOS_PLATFORM_DEFINITIONS})
+diff --git a/lib/FSEngine/FSBSA.cpp b/lib/FSEngine/FSBSA.cpp
+index cf209f4e..37bda1ca 100644
+--- a/lib/FSEngine/FSBSA.cpp
++++ b/lib/FSEngine/FSBSA.cpp
+@@ -31,7 +31,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ***** END LICENCE BLOCK *****/
+ 
+ #include "FSBSA.h"
+-#ifdef __linux__
++#if defined(__linux__) || defined(__APPLE__)
+ #include <directx/dxgiformat.h>
+ #else
+ #include <dxgiformat.h>
+diff --git a/src/files/ResourceLoader.cpp b/src/files/ResourceLoader.cpp
+index af1355a4..a7a3ea92 100644
+--- a/src/files/ResourceLoader.cpp
++++ b/src/files/ResourceLoader.cpp
+@@ -13,9 +13,112 @@ See the included LICENSE file
+ #include <wx/log.h>
+ 
+ #include <cmath>
++#include <cstring>
+ 
+ extern ConfigurationManager Config;
+ 
++#ifdef __APPLE__
++// macOS OpenGL 4.1 decodes only BC1-BC3. BC4/BC5 (RGTC) and BC7 (BPTC) - most Skyrim SE textures - would upload as
++// nothing and models show untextured, so those are decoded to RGBA8 on the CPU here. Decoders: bc7enc by Rich
++// Geldreich (MIT / public domain), copied into src/bc7enc by SkyrimMT's tools/bodyslide/build.sh.
++#define RGBCX_IMPLEMENTATION
++#include "../bc7enc/rgbcx.h"
++#include "../bc7enc/bc7decomp.cpp"
++
++namespace {
++bool NeedsSoftwareDecode(gli::format f) {
++	switch (f) {
++		case gli::FORMAT_R_ATI1N_UNORM_BLOCK8:
++		case gli::FORMAT_R_ATI1N_SNORM_BLOCK8:
++		case gli::FORMAT_RG_ATI2N_UNORM_BLOCK16:
++		case gli::FORMAT_RG_ATI2N_SNORM_BLOCK16:
++		case gli::FORMAT_RGBA_BP_UNORM_BLOCK16:
++		case gli::FORMAT_RGBA_BP_SRGB_BLOCK16: return true;
++		default: return false;
++	}
++}
++
++// BC4 block with signed endpoints (SNORM): -127..127, stored as 0..254 (+127)
++void UnpackBC4Signed(const uint8_t* b, uint8_t* out, uint32_t stride) {
++	int r0 = std::max(-127, (int)(int8_t)b[0]), r1 = std::max(-127, (int)(int8_t)b[1]);
++	int pal[8] = {r0, r1, 0, 0, 0, 0, 0, 0};
++	if (r0 > r1)
++		for (int i = 1; i < 7; i++) pal[i + 1] = ((7 - i) * r0 + i * r1) / 7;
++	else {
++		for (int i = 1; i < 5; i++) pal[i + 1] = ((5 - i) * r0 + i * r1) / 5;
++		pal[6] = -127;
++		pal[7] = 127;
++	}
++	uint64_t bits = 0;
++	for (int i = 0; i < 6; i++) bits |= (uint64_t)b[2 + i] << (8 * i);
++	for (int i = 0; i < 16; i++) out[i * stride] = (uint8_t)(pal[(bits >> (3 * i)) & 7] + 127);
++}
++
++// Two-channel normal map: Z from X and Y (center = mid)
++void ReconstructNormalZ(uint8_t* px, float mid, float range) {
++	for (int i = 0; i < 16; i++) {
++		float x = (px[i * 4] - mid) / range, y = (px[i * 4 + 1] - mid) / range;
++		float z = std::sqrt(std::max(0.0f, 1.0f - x * x - y * y));
++		if (mid != 127.5f) { // signed source: store as unsigned 0..255
++			px[i * 4] = (uint8_t)std::lround((x * 0.5f + 0.5f) * 255.0f);
++			px[i * 4 + 1] = (uint8_t)std::lround((y * 0.5f + 0.5f) * 255.0f);
++		}
++		px[i * 4 + 2] = (uint8_t)std::lround((z * 0.5f + 0.5f) * 255.0f);
++		px[i * 4 + 3] = 255;
++	}
++}
++
++gli::texture DecodeToRGBA8(const gli::texture& t) {
++	const gli::format f = t.format();
++	const gli::format dst = f == gli::FORMAT_RGBA_BP_SRGB_BLOCK16 ? gli::FORMAT_RGBA8_SRGB_PACK8 : gli::FORMAT_RGBA8_UNORM_PACK8;
++	const bool bc4 = f == gli::FORMAT_R_ATI1N_UNORM_BLOCK8 || f == gli::FORMAT_R_ATI1N_SNORM_BLOCK8;
++	const size_t blockBytes = bc4 ? 8 : 16;
++	gli::texture out(t.target(), dst, t.extent(), t.layers(), t.faces(), t.levels());
++	for (size_t layer = 0; layer < t.layers(); ++layer)
++		for (size_t face = 0; face < t.faces(); ++face)
++			for (size_t level = 0; level < t.levels(); ++level) {
++				const auto ext = t.extent(level);
++				const int w = ext.x, h = ext.y, bw = (w + 3) / 4, bh = (h + 3) / 4;
++				const uint8_t* src = static_cast<const uint8_t*>(t.data(layer, face, level));
++				uint8_t* d = static_cast<uint8_t*>(out.data(layer, face, level));
++				if (t.size(level) < (size_t)bw * bh * blockBytes) continue;
++				for (int by = 0; by < bh; by++)
++					for (int bx = 0; bx < bw; bx++) {
++						uint8_t px[64];
++						std::memset(px, 255, sizeof(px));
++						const uint8_t* blk = src + ((size_t)by * bw + bx) * blockBytes;
++						switch (f) {
++							case gli::FORMAT_RGBA_BP_UNORM_BLOCK16:
++							case gli::FORMAT_RGBA_BP_SRGB_BLOCK16: bc7decomp::unpack_bc7(blk, reinterpret_cast<bc7decomp::color_rgba*>(px)); break;
++							case gli::FORMAT_R_ATI1N_UNORM_BLOCK8:
++							case gli::FORMAT_R_ATI1N_SNORM_BLOCK8:
++								if (f == gli::FORMAT_R_ATI1N_UNORM_BLOCK8) rgbcx::unpack_bc4(blk, px, 4);
++								else UnpackBC4Signed(blk, px, 4);
++								for (int i = 0; i < 16; i++) px[i * 4 + 1] = px[i * 4 + 2] = px[i * 4];
++								break;
++							case gli::FORMAT_RG_ATI2N_UNORM_BLOCK16:
++								rgbcx::unpack_bc5(blk, px, 0, 1, 4);
++								ReconstructNormalZ(px, 127.5f, 127.5f);
++								break;
++							case gli::FORMAT_RG_ATI2N_SNORM_BLOCK16:
++								UnpackBC4Signed(blk, px, 4);
++								UnpackBC4Signed(blk + 8, px + 1, 4);
++								ReconstructNormalZ(px, 127.0f, 127.0f);
++								break;
++							default: break;
++						}
++						for (int y = 0; y < 4; y++)
++							for (int x = 0; x < 4; x++) {
++								const int X = bx * 4 + x, Y = by * 4 + y;
++								if (X < w && Y < h) std::memcpy(d + ((size_t)Y * w + X) * 4, px + (y * 4 + x) * 4, 4);
++							}
++					}
++			}
++	return out;
++}
++} // namespace
++#endif
++
+ ResourceLoader::ResourceLoader() {}
+ 
+ ResourceLoader::~ResourceLoader() {
+@@ -179,6 +282,13 @@ GLuint ResourceLoader::GLI_create_texture(gli::texture& texture, GLuint textureI
+ 		return textureID;
+ 	}
+ 
++#ifdef __APPLE__
++	if (NeedsSoftwareDecode(texture.format())) {
++		gli::texture decoded = DecodeToRGBA8(texture);
++		return GLI_create_texture(decoded, textureID, isSRGB, isSigned);
++	}
++#endif
++
+ 	gli::gl glProfile(gli::gl::PROFILE_GL33);
+ 	gli::gl::format const format = glProfile.translate(texture.format(), texture.swizzles());
+ 	GLenum target = glProfile.translate(texture.target());
+diff --git a/src/program/BodySlideApp.cpp b/src/program/BodySlideApp.cpp
+index 4c03e8b2..913385ed 100644
+--- a/src/program/BodySlideApp.cpp
++++ b/src/program/BodySlideApp.cpp
+@@ -16,6 +16,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
+ #include "BodySlideApp.h"
++
++#include <fstream>
+ #include "../components/ClippingFixer.h"
+ #include "../components/Mesh.h"
+ #include "../files/GameDataStream.h"
+@@ -311,6 +313,19 @@ bool BodySlideApp::OnCmdLineParsed(wxCmdLineParser& parser) {
+ 		}
+ 	}
+ 
++	// One outfit per line: names may contain the separators accepted by --build.
++	wxString buildListFile;
++	if (parser.Found("bl", &buildListFile)) {
++		std::ifstream listStream(buildListFile.ToUTF8().data());
++		std::string line;
++		while (std::getline(listStream, line)) {
++			if (!line.empty() && line.back() == '\r')
++				line.pop_back();
++			if (!line.empty())
++				cmdBuildOutfits.push_back(line);
++		}
++	}
++
+ 	wxString buildFilter;
+ 	if (parser.Found("f", &buildFilter)) {
+ 		buildFilter.Trim(true).Trim(false);
+@@ -318,6 +333,7 @@ bool BodySlideApp::OnCmdLineParsed(wxCmdLineParser& parser) {
+ 	}
+ 
+ 	cmdBuildFilterRegex = parser.Found("regex");
++	cmdNonInteractive = parser.Found("ni");
+ 
+ 	wxString targetDir;
+ 	parser.Found("t", &targetDir);
+@@ -4739,7 +4755,26 @@ int BodySlideApp::BuildListBodies(
+ 	for (auto& implicitChoice : implicitChoices)
+ 		buildSelection.SetOutputChoice(implicitChoice.first, implicitChoice.second);
+ 
+-	if (!choicesList.empty()) {
++	if (!choicesList.empty() && cmdNonInteractive) {
++		// Same default as the dialog: the saved choice if it is still offered, else the first set.
++		for (size_t index = 0; index < choicesList.size(); ++index) {
++			wxString choiceSel = choicesList[index][0];
++			std::string outputChoice = buildSelection.GetOutputChoice(outFileList[index]);
++			if (!outputChoice.empty() && choicesList[index].Index(wxString::FromUTF8(outputChoice)) != wxNOT_FOUND)
++				choiceSel = wxString::FromUTF8(outputChoice);
++
++			wxLogMessage("Non-interactive build: '%s' uses '%s'.", wxString::FromUTF8(outFileList[index]), choiceSel);
++			buildSelection.SetOutputChoice(outFileList[index], choiceSel.ToUTF8().data());
++			choicesList[index].Remove(choiceSel);
++
++			for (auto& outfit : choicesList[index]) {
++				auto result = std::find(outfitList.begin(), outfitList.end(), outfit.ToStdString());
++				if (result != outfitList.end())
++					outfitList.erase(result);
++			}
++		}
++	}
++	else if (!choicesList.empty()) {
+ 		wxXmlResource* rsrc = wxXmlResource::Get();
+ 		wxDialog* dlgBuildOverride = rsrc->LoadDialog(sliderView, "dlgBuildOverride");
+ 		dlgBuildOverride->SetSize(dlgBuildOverride->FromDIP(wxSize(800, 400)));
+@@ -4979,8 +5014,12 @@ int BodySlideApp::BuildListBodies(
+ 		wxString progMsg = wxString::Format(_("Processing '%s' (%d of %d)..."), wxString::FromUTF8(outfit), processedCount, (int)outfitList.size());
+ 		{
+ 			std::lock_guard<std::mutex> lock(batchBuildMutex);
+-			progWnd.Update((int)(processedCount * progstep) - 1, progMsg);
+-			progWnd.Fit();
++			// Windows tolerates window updates from worker threads; macOS AppKit aborts. The calling (main) thread runs
++			// build work too, so the dialog still advances.
++			if (wxIsMainThread()) {
++				progWnd.Update((int)(processedCount * progstep) - 1, progMsg);
++				progWnd.Fit();
++			}
+ 			wxLogMessage(progMsg);
+ 		}
+ 
+@@ -5614,8 +5653,10 @@ void BodySlideApp::CommandLineBuild() {
+ 			errlist.Add(ename + ":" + e.second);
+ 		}
+ 
+-		wxSingleChoiceDialog errdisplay(sliderView, _("The following sets failed"), _("Failed"), errlist, nullptr, wxDEFAULT_DIALOG_STYLE | wxOK | wxRESIZE_BORDER);
+-		errdisplay.ShowModal();
++		if (!cmdNonInteractive) {
++			wxSingleChoiceDialog errdisplay(sliderView, _("The following sets failed"), _("Failed"), errlist, nullptr, wxDEFAULT_DIALOG_STYLE | wxOK | wxRESIZE_BORDER);
++			errdisplay.ShowModal();
++		}
+ 	}
+ 
+ 	sliderView->Close(true);
+diff --git a/src/program/BodySlideApp.h b/src/program/BodySlideApp.h
+index e73932d2..b461f245 100644
+--- a/src/program/BodySlideApp.h
++++ b/src/program/BodySlideApp.h
+@@ -99,6 +99,7 @@ class BodySlideApp : public wxApp {
+ 	std::vector<std::string> cmdBuildOutfits; // Outfits to build, given by name.
+ 	std::string cmdBuildFilter;				  // Outfits to build, given as an outfit filter expression.
+ 	bool cmdBuildFilterRegex = false;		  // The filter is a regular expression instead of a substring.
++	bool cmdNonInteractive = false;		  // No dialogs: saved build selections (or the default choice) resolve overrides.
+ 	std::string cmdTargetDir;
+ 	std::string cmdPreset;
+ 	std::string cmdPresetFile;
+@@ -519,6 +520,8 @@ static const wxCmdLineEntryDesc g_cmdLineDesc[] = {{wxCMD_LINE_OPTION, "gbuild",
+ 													"builds all outfits matching the specified filter on launch, works like the outfit filter box",
+ 													wxCMD_LINE_VAL_STRING},
+ 												   {wxCMD_LINE_SWITCH, "regex", "regexfilter", "treats the value of the filter option as a regular expression"},
++												   {wxCMD_LINE_OPTION, "bl", "buildlist", "builds the outfits listed in the given UTF-8 text file, one outfit name per line", wxCMD_LINE_VAL_STRING},
++												   {wxCMD_LINE_SWITCH, "ni", "noninteractive", "no dialogs during a command-line build: file overrides use BuildSelection.xml or the default choice, failures are only logged"},
+ 												   {wxCMD_LINE_OPTION, "t", "targetdir", "build target directory, defaults to game data path", wxCMD_LINE_VAL_STRING},
+ 												   {wxCMD_LINE_OPTION,
+ 													"p",
+diff --git a/src/program/OutfitProject.cpp b/src/program/OutfitProject.cpp
+index 3182101c..01dc4234 100644
+--- a/src/program/OutfitProject.cpp
++++ b/src/program/OutfitProject.cpp
+@@ -4569,7 +4569,7 @@ bool OutfitProject::PrepareRefineMesh(NiShape* shape, UndoStateShape& uss, std::
+ 		uint16_t mid;
+ 		float len;
+ 
+-		bool operator<(const EdgeWithMidAndLen &e2) {
++		bool operator<(const EdgeWithMidAndLen &e2) const {
+ 			return e2.len < len;
+ 		}
+ 	};
+@@ -6329,7 +6329,7 @@ void OutfitProject::PrepareSymmetrizeVertices(NiShape* shape, UndoStateShape& us
+ 				Vector3 sum;
+ 				for (int p : p2s)
+ 					sum += tuss.addVerts[p].pos;
+-				avg += sum / p2s.size();
++				avg += sum / static_cast<float>(p2s.size());
+ 				++avgcount;
+ 			}
+ 			if (p1 == p2)
+@@ -6340,7 +6340,7 @@ void OutfitProject::PrepareSymmetrizeVertices(NiShape* shape, UndoStateShape& us
+ 					Vector3 sum;
+ 					for (int p : p1s)
+ 						sum += tuss.addVerts[p].pos;
+-					avg += sum / p1s.size();
++					avg += sum / static_cast<float>(p1s.size());
+ 					++avgcount;
+ 				}
+ 				avg /= avgcount;
+@@ -6377,7 +6377,7 @@ void OutfitProject::PrepareSymmetrizeVertices(NiShape* shape, UndoStateShape& us
+ 				Vector3 sum;
+ 				for (int p : p2s)
+ 					sum += GetUSliderDiff(tuss.addVerts[p], sd.sliderName);
+-				avg = sum / p2s.size();
++				avg = sum / static_cast<float>(p2s.size());
+ 				++avgcount;
+ 			}
+ 			if (p1 == p2)
+@@ -6388,7 +6388,7 @@ void OutfitProject::PrepareSymmetrizeVertices(NiShape* shape, UndoStateShape& us
+ 					Vector3 sum;
+ 					for (int p : p1s)
+ 						sum += GetUSliderDiff(tuss.addVerts[p], sd.sliderName);
+-					avg += sum / p1s.size();
++					avg += sum / static_cast<float>(p1s.size());
+ 					++avgcount;
+ 				}
+ 				avg /= avgcount;
+diff --git a/src/render/GLExtensions.cpp b/src/render/GLExtensions.cpp
+index aa9ba8fc..395b990b 100644
+--- a/src/render/GLExtensions.cpp
++++ b/src/render/GLExtensions.cpp
+@@ -10,7 +10,7 @@ bool extInitialized = false;
+ bool extSupported = true;
+ bool extGLISupported = true;
+ 
+-#ifndef __linux__
++#if !defined(__linux__) && !defined(__APPLE__)
+ // OpenGL 4.2
+ PFNGLTEXSTORAGE1DPROC glTexStorage1D = nullptr;
+ PFNGLTEXSTORAGE2DPROC glTexStorage2D = nullptr;
+@@ -186,6 +186,9 @@ bool IsExtensionSupported(const char* ext) {
+ void InitExtensions() {
+ 	if (extInitialized)
+ 		return;
++#ifdef __APPLE__
++	glewExperimental = GL_TRUE; // core profile: load entry points without the legacy extension string
++#endif
+ 	GLenum err = glewInit();
+ 	// TODO: figure out why we're getting GLEW_ERROR_NO_GLX_DISPLAY (error
+ 	// code 4) with gtk3 builds of wxWidgets and fix it.  Everything still
+diff --git a/src/render/GLExtensions.h b/src/render/GLExtensions.h
+index dbd386cf..4541063a 100644
+--- a/src/render/GLExtensions.h
++++ b/src/render/GLExtensions.h
+@@ -10,11 +10,7 @@ See the included LICENSE file
+ #include <GL/gl.h>
+ #include <GL/glu.h>
+ #include <GL/glext.h>
+-#elif defined(__APPLE__)
+-#include <OpenGL/gl.h>
+-#include <OpenGL/glu.h>
+-#include <OpenGL/glext.h>
+-#elif defined(__linux__)
++#elif defined(__linux__) || defined(__APPLE__)
+ #include <GL/glew.h>
+ #else
+ #error Platform OpenGL headers not defined yet!
+@@ -24,7 +20,7 @@ extern bool extInitialized;
+ extern bool extSupported;
+ extern bool extGLISupported;
+ 
+-#ifndef __linux__
++#if !defined(__linux__) && !defined(__APPLE__)
+ // OpenGL 4.2
+ extern PFNGLTEXSTORAGE1DPROC glTexStorage1D;
+ extern PFNGLTEXSTORAGE2DPROC glTexStorage2D;

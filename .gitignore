@@ -1,0 +1,20 @@
+build/
+vendor-ref/
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+bench/
+.signing-keychain-pass
+helpers/loot/target/
+# internal development notes (not part of the public project)
+CLAUDE.md
+PLAN.md
+docs/STATUS.md
+docs/MODMANAGER.md
+docs/m0-report.md
+docs/m1-report.md
+docs/m3-m4-report.md
+docs/m8-report.md
+docs/m11-controllers.md
+docs/nexus-registration-email.md

@@ -1,0 +1,133 @@
+diff --git a/Pandora.Engine/AppBootstrapper.cs b/Pandora.Engine/AppBootstrapper.cs
+index c84b529..9b526e8 100644
+--- a/Pandora.Engine/AppBootstrapper.cs
++++ b/Pandora.Engine/AppBootstrapper.cs
+@@ -31,7 +31,8 @@ public sealed class AppBootstrapper(
+ 	IModService modService,
+ 	IBehaviourEngine engine,
+ 	EngineOrchestrator orchestrator,
+-	IEngineConfiguration startupConfig
++	IEngineConfiguration startupConfig,
++	Pandora.Skyrim.CLI.LaunchOptions launchOptions
+ )
+ {
+ 	private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+@@ -42,6 +43,13 @@ public sealed class AppBootstrapper(
+ 
+ 		settings.Initialize();
+ 
++		// SkyrimMT: --tesv beats the saved game folder (upstream only uses it when nothing is saved), and -o/--output
++		// (parsed but not applied upstream) is honoured, so output never lands in the game's Data
++		if (launchOptions.SkyrimGameDirectory is { } gameDirectory)
++			settings.Paths.SetGameDataFolder(gameDirectory);
++		if (launchOptions.OutputDirectory is { } outputDirectory)
++			settings.Paths.SetOutputFolder(outputDirectory);
++
+ 		nlogger.Initialize();
+ 
+ 		themer.Initialize();
+diff --git a/Pandora.Engine/Platform/Services.cs b/Pandora.Engine/Platform/Services.cs
+index d0be43d..47c4eba 100644
+--- a/Pandora.Engine/Platform/Services.cs
++++ b/Pandora.Engine/Platform/Services.cs
+@@ -27,12 +27,15 @@ public static class Services
+ 				.AddTransient<SteamGameLocator>()
+ 				.AddTransient<GogGameLocator>()
+ 				.AddTransient<RegistryGameLocator>()
+-				.AddSingleton<IGameLocator>(sp => new CompositeGameLocator([
+-					sp.GetRequiredService<CommandLineGameLocator>(),
+-					sp.GetRequiredService<SteamGameLocator>(),
+-					sp.GetRequiredService<GogGameLocator>(),
+-					sp.GetRequiredService<RegistryGameLocator>(),
+-				]));
++				.AddSingleton<IGameLocator>(sp => System.OperatingSystem.IsWindows()
++					? new CompositeGameLocator([
++						sp.GetRequiredService<CommandLineGameLocator>(),
++						sp.GetRequiredService<SteamGameLocator>(),
++						sp.GetRequiredService<GogGameLocator>(),
++						sp.GetRequiredService<RegistryGameLocator>(),
++					])
++					// macOS/Linux (SkyrimMT): no Windows registry; the game folder always comes from --tesv
++					: new CompositeGameLocator([sp.GetRequiredService<CommandLineGameLocator>()]));
+ 		}
+ 	}
+ }
+\ No newline at end of file
+diff --git a/Pandora.Skyrim/AnimData/AnimDataManager.cs b/Pandora.Skyrim/AnimData/AnimDataManager.cs
+index f192b59..e957794 100644
+--- a/Pandora.Skyrim/AnimData/AnimDataManager.cs
++++ b/Pandora.Skyrim/AnimData/AnimDataManager.cs
+@@ -220,6 +220,10 @@ public class AnimDataManager : IAnimDataManager
+ 				}
+ 			}
+ 
++			// macOS/Linux (SkyrimMT): the game's files use CRLF; templates already do, lines written here would get LF
++			if (!System.OperatingSystem.IsWindows())
++				File.WriteAllText(outputAnimDataSingleFile.FullName, File.ReadAllText(outputAnimDataSingleFile.FullName).ReplaceLineEndings("\r\n"));
++
+ 			Logger.Info($"Successfully merged OutputAnimData file");
+ 		}
+ 		catch (IOException ex)
+diff --git a/Pandora.Skyrim/AnimSetData/AnimSetDataManager.cs b/Pandora.Skyrim/AnimSetData/AnimSetDataManager.cs
+index 88c475b..ac9c6de 100644
+--- a/Pandora.Skyrim/AnimSetData/AnimSetDataManager.cs
++++ b/Pandora.Skyrim/AnimSetData/AnimSetDataManager.cs
+@@ -149,6 +149,10 @@ public class AnimSetDataManager : IAnimSetDataManager
+ 				}
+ 			}
+ 
++			// macOS/Linux (SkyrimMT): the game's files use CRLF; templates already do, lines written here would get LF
++			if (!System.OperatingSystem.IsWindows())
++				File.WriteAllText(outputAnimSetDataSingleFile.FullName, File.ReadAllText(outputAnimSetDataSingleFile.FullName).ReplaceLineEndings("\r\n"));
++
+ 			Logger.Info($"Successfully merged OutputAnimSetData file");
+ 		}
+ 		catch (IOException ex)
+diff --git a/Pandora.Skyrim/Hkx/Packfile/PackFile.cs b/Pandora.Skyrim/Hkx/Packfile/PackFile.cs
+index 5ecd486..cde42f4 100644
+--- a/Pandora.Skyrim/Hkx/Packfile/PackFile.cs
++++ b/Pandora.Skyrim/Hkx/Packfile/PackFile.cs
+@@ -87,6 +87,9 @@ public class PackFile : IEquatable<PackFile>, IPackFile
+ 
+ 	public PackFile(FileInfo file, IProject? project)
+ 	{
++		// macOS/Linux (SkyrimMT): project lists and HKX data use Windows separators
++		if (!System.OperatingSystem.IsWindows() && file.FullName.Contains('\\'))
++			file = new FileInfo(file.FullName.Replace('\\', '/'));
+ 		InputHandle = file;
+ 		OutputHandle = file;
+ 
+diff --git a/Pandora.Skyrim/Hkx/Packfile/PackFileCharacter.cs b/Pandora.Skyrim/Hkx/Packfile/PackFileCharacter.cs
+index 92d9254..04229e5 100644
+--- a/Pandora.Skyrim/Hkx/Packfile/PackFileCharacter.cs
++++ b/Pandora.Skyrim/Hkx/Packfile/PackFileCharacter.cs
+@@ -96,6 +96,9 @@ public class PackFileCharacter : PackFile, IEquatable<PackFileCharacter>, IPackF
+ 
+ 	public bool AddUniqueAnimation(string name)
+ 	{
++		// macOS/Linux (SkyrimMT): paths built with Path.Join use '/'; the game's character files use '\\'
++		if (!System.OperatingSystem.IsWindows())
++			name = name.Replace('/', '\\');
+ 		lock (_uniqueBaseAnimations)
+ 		{
+ 			if (_uniqueBaseAnimations.Count == 0)
+diff --git a/Pandora.Skyrim/Hkx/Packfile/PackFileConcurrentCache.cs b/Pandora.Skyrim/Hkx/Packfile/PackFileConcurrentCache.cs
+index c727999..eb0c682 100644
+--- a/Pandora.Skyrim/Hkx/Packfile/PackFileConcurrentCache.cs
++++ b/Pandora.Skyrim/Hkx/Packfile/PackFileConcurrentCache.cs
+@@ -20,7 +20,14 @@ public class PackFileConcurrentCache : IPackFileCache
+ 	public PackFileConcurrentCache() { }
+ 
+ 	private T GetOrCreatePackFile<T>(FileInfo file, Func<T> creator)
+-		where T : PackFile => (T)_pathMap.GetOrAdd(file.FullName, _ => creator());
++		where T : PackFile => (T)_pathMap.GetOrAdd(Key(file), _ => creator());
++
++	// macOS/Linux (SkyrimMT): paths built from HKX data keep Windows separators ("characters\\..\\Behaviors\\0_Master.hkx"),
++	// so files shared by several projects (0_master.hkx for defaultmale + defaultfemale) must be keyed by the real path.
++	private static string Key(FileInfo file) =>
++		System.OperatingSystem.IsWindows() || !file.FullName.Contains('\\')
++			? file.FullName
++			: Path.GetFullPath(file.FullName.Replace('\\', '/'));
+ 
+ 	public IPackFile LoadPackFile(FileInfo file) =>
+ 		GetOrCreatePackFile(file, () => new PackFile(file));

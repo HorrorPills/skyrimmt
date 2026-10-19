@@ -124,9 +124,13 @@ ensure_audio_libs() {
 # "5440 shaders failed to compile" (E5005 GetDimensions on RWTexture2D, A Dragonborn's Fate). Microsoft's own
 # d3dcompiler_47 ("for Redistribution", 6.3.9600.16384, the file winetricks d3dcompiler_47 uses, from the Windows SDK
 # cabinet on download.microsoft.com) for SkyrimSE.exe only. config/d3dcompiler = builtin switches back.
-D3DC_CAB_URL="https://download.microsoft.com/download/B/0/C/B0C80BA3-8AD6-4958-810B-6882485230B5/standalonesdk/Installers/61d57a7a82309cd161a854a6f4619e52.cab"
-D3DC_CAB_SHA256="f736e161547095bb8d98c636b85fdfeb4070fefeee3c3745db3ce88f6eb1d9de"
-D3DC_DLL_SHA256="e994847e01a6f1e4cbdc5a864616ac262f67ee4f14db194984661a8d927ab7f4"
+# Microsoft's d3dcompiler_47 from the Windows SDK 10.0.28000 (NuGet package Microsoft.Windows.SDK.CPP, published by
+# Microsoft; NuGet packages never change). Only the DLL's bytes are fetched (HTTP range, raw deflate) instead of the
+# 161 MB package. The Windows 8.1 build used before failed Community Shaders features (X3676 typed UAV loads, X4014
+# gradients in loops) — verified fixed with this build on 2026-10-19.
+D3DC_PKG_URL="https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.cpp/10.0.28000.2705/microsoft.windows.sdk.cpp.10.0.28000.2705.nupkg"
+D3DC_RANGE="46382753-48535754"   # c/Redist/D3D/x64/d3dcompiler_47.dll (deflate data of that zip entry)
+D3DC_DLL_SHA256="3e56c1a0867aa04cbca948b3664fcac5d51275865cd044a45a3fd6ce636ee914"
 ensure_shader_compiler() {
   local sys="$WINEPREFIX/drive_c/windows/system32" d="$SKYRIM_HOME/cache/d3dcompiler" keep="$SKYRIM_HOME/backups/wine-d3dcompiler"
   local key='HKCU\Software\Wine\AppDefaults\SkyrimSE.exe\DllOverrides'
@@ -137,13 +141,17 @@ ensure_shader_compiler() {
   [ "$(shasum -a 256 "$sys/d3dcompiler_47.dll" 2>/dev/null | cut -d' ' -f1)" = "$D3DC_DLL_SHA256" ] && grep -q '"d3dcompiler_47"="native,builtin"' "$WINEPREFIX/user.reg" 2>/dev/null && return 0
   mkdir -p "$d"
   if [ "$(shasum -a 256 "$d/d3dcompiler_47.dll" 2>/dev/null | cut -d' ' -f1)" != "$D3DC_DLL_SHA256" ]; then
-    if [ "$(shasum -a 256 "$d/sdk64.cab" 2>/dev/null | cut -d' ' -f1)" != "$D3DC_CAB_SHA256" ]; then
-      curl -sfL --retry 2 -o "$d/sdk64.cab.part" "$D3DC_CAB_URL" || { echo "INFO shaders: Microsoft's compiler not available (offline?) — using Wine's" >&2; return 0; }
-      [ "$(shasum -a 256 "$d/sdk64.cab.part" | cut -d' ' -f1)" = "$D3DC_CAB_SHA256" ] || { rm -f "$d/sdk64.cab.part"; return 0; }
-      mv "$d/sdk64.cab.part" "$d/sdk64.cab"
+    curl -sfL --retry 2 -r "$D3DC_RANGE" -o "$d/d3dcompiler_47.deflate" "$D3DC_PKG_URL" \
+      || { echo "INFO shaders: Microsoft's compiler not available (offline?) — using the one installed" >&2; return 0; }
+    if ! /usr/bin/perl -MIO::Uncompress::RawInflate=rawinflate -e 'rawinflate($ARGV[0] => $ARGV[1]) or exit 1' \
+        "$d/d3dcompiler_47.deflate" "$d/d3dcompiler_47.dll.part" 2>/dev/null; then
+      # no system Perl: the whole package (161 MB, once) and macOS's unzip
+      curl -sfL --retry 2 -o "$d/sdk.nupkg" "$D3DC_PKG_URL" && unzip -p "$d/sdk.nupkg" 'c/Redist/D3D/x64/d3dcompiler_47.dll' > "$d/d3dcompiler_47.dll.part"
+      rm -f "$d/sdk.nupkg"
     fi
-    bsdtar -xf "$d/sdk64.cab" -C "$d" fil3585cb2ea5db13cc0838f8d06b5c9679 && mv "$d/fil3585cb2ea5db13cc0838f8d06b5c9679" "$d/d3dcompiler_47.dll"
-    [ "$(shasum -a 256 "$d/d3dcompiler_47.dll" 2>/dev/null | cut -d' ' -f1)" = "$D3DC_DLL_SHA256" ] || return 0
+    [ -s "$d/d3dcompiler_47.dll.part" ] && mv "$d/d3dcompiler_47.dll.part" "$d/d3dcompiler_47.dll"
+    rm -f "$d/d3dcompiler_47.deflate" "$d/d3dcompiler_47.dll.part"
+    [ "$(shasum -a 256 "$d/d3dcompiler_47.dll" 2>/dev/null | cut -d' ' -f1)" = "$D3DC_DLL_SHA256" ] || { rm -f "$d/d3dcompiler_47.dll"; return 0; }
   fi
   mkdir -p "$keep"
   if [ "$(shasum -a 256 "$sys/d3dcompiler_47.dll" 2>/dev/null | cut -d' ' -f1)" != "$D3DC_DLL_SHA256" ]; then

@@ -51,7 +51,8 @@ setCursorPosition:]`, Wine 10.0.
   (`*-source.tar.xz`). SkyrimMT downloads a tool the first time a profile needs it and verifies its SHA-256
   (`config/release.conf`).
 * **Microsoft XAudio2 2.7 and d3dcompiler_47** (Microsoft redistributable licence): downloaded on demand from Microsoft
-  (DirectX June 2010 redistributable, Windows SDK) into the Wine environment for correct 3D audio and shader
+  (DirectX June 2010 redistributable; d3dcompiler_47 10.0.28000 from Microsoft's Windows SDK NuGet package
+  Microsoft.Windows.SDK.CPP, only the DLL's bytes fetched) into the Wine environment for correct 3D audio and shader
   compilation; not bundled.
 * **7-Zip for macOS** (`7zz`, LGPL-2.1 + unRAR restriction, https://github.com/ip7z/7zip): downloaded on demand into
   `$SKYRIM_HOME/tools/7zip` (checksum from the release) when the system unpacker can't open an archive; not bundled.

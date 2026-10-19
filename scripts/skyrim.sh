@@ -25,6 +25,21 @@ DXMTP="$SKYRIMMT_ROOT/tools/wine-patches/dxmt_purevirtual_return.sh"
 AUDP="$SKYRIMMT_ROOT/tools/wine-patches/mmdevapi_buffer.sh"
 [ "$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$AUDP" status)" = patched ] || SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$AUDP" apply >/dev/null
 
+# Audio mix rate (CrossOver's "audio sample rate"): Wine reports this rate instead of the device's, macOS converts.
+# 96 kHz by default — 44.1 kHz devices crackle otherwise. Launcher Game tab → config/audio-mix-rate ("device" = Wine's own).
+RATEP="$SKYRIMMT_ROOT/tools/wine-patches/coreaudio_rate.sh"
+mix=$(tr -d '[:space:]' < "$SKYRIM_HOME/config/audio-mix-rate" 2>/dev/null); mix=${mix:-96000}
+if [ "$mix" = device ]; then
+  [ "$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" status)" = original ] || SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" revert >/dev/null
+else
+  [ "$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" status)" = "patched-$mix" ] || SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" apply "$mix" >/dev/null
+fi
+
+# Audio period 30 ms instead of 10 ms: Microsoft's XAudio2 writes one period per wake-up; 10 ms left the output running
+# dry ~13 times a second (crackle, measured with tools/audiotap). See tools/wine-patches/coreaudio_period.sh.
+PERP="$SKYRIMMT_ROOT/tools/wine-patches/coreaudio_period.sh"
+[ "$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$PERP" status)" = patched ] || SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$PERP" apply >/dev/null
+
 ensure_winebus_options   # PlayStation controllers on macOS (see _env.sh)
 ensure_audio_libs        # Microsoft XAudio2 for SkyrimSE.exe: correct sound distances (see _env.sh)
 ensure_shader_compiler   # Microsoft d3dcompiler_47 for SkyrimSE.exe: Community Shaders / ENB compile (see _env.sh)
@@ -58,6 +73,27 @@ esac
 for d in d3dx9_42 tbb tbbmalloc; do
   [ -f "$GAMEDIR/$d.dll" ] && ovr="$ovr;$d=n,b"
 done
+
+# Display: a borderless window on macOS for every profile (exclusive fullscreen misbehaves under Wine; modlists made
+# on Windows often ship bBorderless=0, a bordered window). Size from the launcher's Game tab (config/window-size):
+# "fit" (default) = the screen, "WxH" = that size (never larger than the screen), "keep" = the profile's INI as is.
+prefs="$MYGAMES_DIR/SkyrimPrefs.ini"
+wsize=$(tr -d '[:space:]' < "$SKYRIM_HOME/config/window-size" 2>/dev/null); wsize=${wsize:-fit}
+if [ -f "$prefs" ] && [ "$wsize" != keep ]; then
+  . "$SKYRIMMT_ROOT/scripts/ini.sh"
+  [ "$(ini_get "$prefs" Display bBorderless)" = 1 ] || ini_set "$prefs" Display bBorderless 1
+  [ "$(ini_get "$prefs" Display "bFull Screen")" = 0 ] || ini_set "$prefs" Display "bFull Screen" 0
+  ds=$("$SKYRIMMT_ROOT/build/tools/displaystate" 2>/dev/null)
+  dw=$(echo "$ds" | sed -n 's/.* w=\([0-9]*\).*/\1/p'); dh=$(echo "$ds" | sed -n 's/.* h=\([0-9]*\).*/\1/p')
+  if [ -n "$dw" ] && [ -n "$dh" ]; then
+    case $wsize in
+      *x*) ww=${wsize%x*}; wh=${wsize#*x}; [ "$ww" -gt "$dw" ] && ww=$dw; [ "$wh" -gt "$dh" ] && wh=$dh ;;
+      *)   ww=$dw; wh=$dh ;;
+    esac
+    [ "$(ini_get "$prefs" Display "iSize W")" = "$ww" ] || ini_set "$prefs" Display "iSize W" "$ww"
+    [ "$(ini_get "$prefs" Display "iSize H")" = "$wh" ] || ini_set "$prefs" Display "iSize H" "$wh"
+  fi
+fi
 
 cd "$GAMEDIR" || exit 1
 exe=SkyrimSE.exe

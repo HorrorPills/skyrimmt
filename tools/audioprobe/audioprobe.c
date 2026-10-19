@@ -83,7 +83,8 @@ int main(void)
     for (int v = 0; v < 16; v++) {
         void *src = NULL;
         if (FAILED(xa->lpVtbl->CreateSourceVoice(xa, &src, &wf, 0, 2.0f, NULL, NULL, NULL)) || !src) break;
-        ((SetVolumeFn)VFN(src, 12))(src, 0.0f, 0);
+        float vol = 0.0f; char *pv = getenv("PROBE_VOLUME"); if (pv) vol = (float)atof(pv);   /* audible test tone for tools/audiotap */
+        ((SetVolumeFn)VFN(src, 12))(src, vol, 0);
         ((SubmitFn)VFN(src, 21))(src, &b, NULL);
         ((StartFn)VFN(src, 19))(src, 0, 0);
     }

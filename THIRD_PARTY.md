@@ -15,6 +15,13 @@ v0.1.0 release; URL + SHA-256 in `config/release.conf`). Setup clones a local tf
 | DXMT | as bundled (d3d11.dll dated 2025-07-10; exact version to be confirmed in M1) | LGPL-2.1 | https://github.com/3Shain/dxmt |
 | vkd3d | bundled with Wine | LGPL-2.1-or-later | https://gitlab.winehq.org/wine/vkd3d |
 
+**Audio mix rate:** `tools/wine-patches/coreaudio_rate.sh` changes one instruction in Wine's `winecoreaudio.so`
+(`unix_get_mix_format`, `dlls/winecoreaudio.drv/coreaudio.c`) so Wine reports a fixed mix rate (96 kHz by default,
+like CrossOver's audio setting) instead of the device's; applied locally, original kept in
+`$SKYRIM_HOME/backups/winecoreaudio.so.orig`, reverted by choosing "Device rate". `tools/wine-patches/coreaudio_period.sh`
+changes the driver's default device period from 10 to 30 ms (`def_period`), which removes the output underruns that
+cause crackling with Microsoft's XAudio2 (measured with `tools/audiotap`).
+
 **Modification:** on the user's machine, `tools/wine-patches/winemac_warp_nodiscard.sh` (from tf2mt) binary-patches
 two instructions in Wine's `winemac.so` so mouse motion isn't discarded on cursor warps. The shipped runtime is
 unmodified; the patch is applied locally (original kept in `$SKYRIM_HOME/backups/winemac.so.orig`) and can be

@@ -323,6 +323,26 @@ final class Launcher: ObservableObject {
 
     // MARK: setup
 
+    // MARK: window size (scripts/skyrim.sh applies it before every launch)
+
+    @Published var windowSize: String = (try? String(contentsOfFile: Paths.game + "/config/window-size", encoding: .utf8))?
+        .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "fit"
+    func setWindowSize(_ v: String) {
+        windowSize = v
+        try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
+        try? (v + "\n").write(toFile: Paths.game + "/config/window-size", atomically: true, encoding: .utf8)
+        message = v == "keep" ? "Window size: the profile's own setting." : "Window size applies at the next launch."
+    }
+
+    @Published var audioMixRate: String = (try? String(contentsOfFile: Paths.game + "/config/audio-mix-rate", encoding: .utf8))?
+        .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "96000"
+    func setAudioMixRate(_ v: String) {
+        audioMixRate = v
+        try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
+        try? (v + "\n").write(toFile: Paths.game + "/config/audio-mix-rate", atomically: true, encoding: .utf8)
+        message = "Audio mix rate applies at the next launch."
+    }
+
     // MARK: one-click setup: runtime + Wine + Steam (setup.sh) → Steam sign-in → Skyrim install, continuing by itself
 
     @Published var autoSetup = false
@@ -1203,6 +1223,32 @@ struct ContentView: View {
             }
             Divider().overlay(Color.white.opacity(0.06))
             HStack {
+                let screen = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
+                RowText(title: "Window size",
+                        detail: "Borderless window. Applied at every launch, for every profile.")
+                Picker("", selection: Binding(get: { launcher.windowSize }, set: { launcher.setWindowSize($0) })) {
+                    Text("Fit screen (\(Int(screen.width))×\(Int(screen.height)))").tag("fit")
+                    ForEach(["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"].filter { s in
+                        let p = s.split(separator: "x").compactMap { Double($0) }
+                        return p.count == 2 && p[0] <= screen.width && p[1] <= screen.height && !(p[0] == screen.width && p[1] == screen.height)
+                    }, id: \.self) { s in Text(s.replacingOccurrences(of: "x", with: "×")).tag(s) }
+                    Text("Use profile settings").tag("keep")
+                }
+                .labelsHidden().frame(width: 230)
+            }
+            Divider().overlay(Color.white.opacity(0.06))
+            HStack {
+                RowText(title: "Audio mix rate",
+                        detail: "96 kHz fixes crackling on most Macs. Your audio device keeps its own rate.")
+                Picker("", selection: Binding(get: { launcher.audioMixRate }, set: { launcher.setAudioMixRate($0) })) {
+                    Text("96 kHz (recommended)").tag("96000")
+                    Text("48 kHz").tag("48000")
+                    Text("Device rate").tag("device")
+                }
+                .labelsHidden().frame(width: 230)
+            }
+            Divider().overlay(Color.white.opacity(0.06))
+            HStack {
                 RowText(title: "Skyrim version",
                         detail: mods.versionCurrent == "steam" ? "Steam's current version. Pin an older one for mods that need it."
                                                                : "Pinned: Steam updates can't break it. Per profile.")
@@ -1485,3 +1531,5 @@ struct ModsCommands: Commands {
         if let s { model.section = s }
     }
 }
+
+extension String { var nonEmpty: String? { isEmpty ? nil : self } }

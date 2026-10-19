@@ -128,6 +128,24 @@ case $st in
   *)        todo "unknown Wine build — audio buffer unchanged (sound may crackle)" ;;
 esac
 
+step "Audio mix rate 96 kHz (Wine audio driver)"
+RATEP="$SKYRIMMT_ROOT/tools/wine-patches/coreaudio_rate.sh"
+st=$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" status 2>&1)
+case $st in
+  patched-*) skip "already applied (${st#patched-} Hz)" ;;
+  original)  SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" apply >/dev/null && ok "applied" || fail "audio mix rate patch failed" ;;
+  *)         todo "unknown Wine build — mix rate unchanged (sound may crackle on 44.1 kHz devices)" ;;
+esac
+
+step "Audio without crackling (Wine audio period 30 ms)"
+PERP="$SKYRIMMT_ROOT/tools/wine-patches/coreaudio_period.sh"
+st=$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$PERP" status 2>&1)
+case $st in
+  patched)  skip "already applied" ;;
+  original) SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$PERP" apply >/dev/null && ok "applied" || fail "audio period patch failed" ;;
+  *)        todo "unknown Wine build — audio period unchanged (sound may crackle)" ;;
+esac
+
 step "Steam for Windows"
 if [ -f "$STEAM_DIR/steam.exe" ]; then skip "installed"
 else

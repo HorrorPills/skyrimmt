@@ -309,6 +309,19 @@ final class Launcher: ObservableObject {
         }
     }
 
+    /// DXMT build pinned in config/release.conf (scripts/dxmt.sh installs it); nil: the runtime's own.
+    static var pinnedDXMT: String? {
+        let conf = (try? String(contentsOfFile: Paths.releaseConf, encoding: .utf8)) ?? ""
+        return conf.split(separator: "\n").first { $0.hasPrefix("DXMT_VERSION=") }
+            .map { String($0.dropFirst("DXMT_VERSION=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")) }?.nonEmpty
+    }
+    /// The pinned DXMT is the one installed (wine/.dxmt-build, written by scripts/dxmt.sh).
+    var dxmtCurrent: Bool {
+        guard let pinned = Launcher.pinnedDXMT else { return true }
+        return (try? String(contentsOfFile: Paths.game + "/wine/.dxmt-build", encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) == pinned
+    }
+
     func refreshChecks() {
         checks = [
             SetupCheck(id: "rosetta", title: "Rosetta 2", ok: exists(Paths.rosetta),
@@ -319,6 +332,8 @@ final class Launcher: ObservableObject {
                        fix: "Created by “Run setup”."),
             SetupCheck(id: "crashfix", title: "Skyrim fix for the Metal renderer", ok: crashFix == .applied,
                        fix: "Applied by “Run setup” (without it Skyrim quits after the logo)."),
+            SetupCheck(id: "dxmt", title: "Metal renderer (DXMT \(Launcher.pinnedDXMT ?? "runtime"))", ok: dxmtCurrent,
+                       fix: "Click “Run setup” with Skyrim and Steam closed: updates DXMT (no more black shadows on 1.6.1170)."),
             SetupCheck(id: "steam", title: "Steam for Windows", ok: exists(Paths.steamExe),
                        fix: "Installed by “Run setup” (official Valve installer)."),
             SetupCheck(id: "login", title: "Logged in to Steam", ok: everLoggedIn,

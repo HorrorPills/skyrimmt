@@ -1,7 +1,7 @@
 #!/bin/bash
 # SkyrimMT setup — idempotent: every step checks first and skips what is already done.
 #   scripts/setup.sh [--runtime <path-or-url to tf2mt-runtime-*.tar.xz>]
-# Steps: Rosetta → Wine runtime → mouse patch → prefix (Windows 10) → Steam (Windows) → INI defaults →
+# Steps: Rosetta → Wine runtime → DXMT → mouse patch → prefix (Windows 10) → Steam (Windows) → INI defaults →
 #        Steam login / Skyrim install (TODO for the user, done from the launcher).
 # Output lines starting with "==>" are step headers, "OK"/"SKIP"/"FAIL"/"TODO" are results, "DONE" ends a run
 # (parsed by the launcher).
@@ -67,6 +67,15 @@ else
   xattr -dr com.apple.quarantine "$SKYRIM_HOME/wine" 2>/dev/null
   [ -x "$WINE" ] && ok "$how ($("$WINE" --version))" || fail "runtime installed but $WINE missing"
 fi
+
+step "Metal renderer (DXMT ${DXMT_VERSION:-from the runtime})"   # before the prefix: wineboot then copies it in
+case $("$SKYRIMMT_ROOT/scripts/dxmt.sh" status) in
+  up-to-date) skip "installed" ;;
+  outdated*)
+    if server_up; then todo "quit Skyrim and Steam, then run setup again (DXMT can't be replaced while Wine runs)"
+    else out=$("$SKYRIMMT_ROOT/scripts/dxmt.sh" install) && ok "$out" || fail "$out"; fi ;;
+  *) fail "no Wine runtime" ;;
+esac
 
 step "Smooth mouse fix (Wine patch)"
 st=$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$PATCH" status 2>&1)

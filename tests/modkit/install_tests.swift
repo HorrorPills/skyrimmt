@@ -131,6 +131,14 @@ func installTests() {
     if case .gameRoot = l { check(true, "") } else { check(false, "DLL-only archive → game folder layout (\(l))") }
     let rm = try! f.kit.finishInstall(work: w, layout: l, name: "Engine Fixes part 2")
     check(snapshot(f.kit.stagingFolder(rm)).keys.sorted() == ["__root__/d3dx9_42.dll", "__root__/tbb.dll", "__root__/tbbmalloc.dll"], "DLLs staged for the game folder")
+    // the Engine Fixes "SKSE64 Preloader" file from a Vortex collection also ships Vortex's root-install instructions
+    write(src.appendingPathComponent("vortexroot/d3dx9_42.dll"), "d3dx9_42.dll")   // same bytes as part 2 above: both deploy next to the exe
+    write(src.appendingPathComponent("vortexroot/vortex_override_instructions.json"), #"[{"type":"setmodtype","value":"dinput"}]"#)
+    pack(src.appendingPathComponent("vortexroot"), src.appendingPathComponent("vortexroot.7z"), format: "7zip")
+    (w, l) = try! f.kit.beginInstall(archive: src.appendingPathComponent("vortexroot.7z"))
+    if case .gameRoot = l { check(true, "") } else { check(false, "DLL + Vortex instructions → game folder layout (\(l))") }
+    let vm = try! f.kit.finishInstall(work: w, layout: l, name: "Engine Fixes - SKSE64 Preloader")
+    check(snapshot(f.kit.stagingFolder(vm)).keys.sorted() == ["__root__/d3dx9_42.dll"], "DLL staged for the game folder, Vortex JSON left out")
     // essentials detection
     let ess = essentials.first { $0.id == "skse" }!
     check(!f.kit.isInstalled(essentials.first { $0.id == "skyui" }!), "SkyUI not installed")

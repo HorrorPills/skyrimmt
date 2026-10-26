@@ -36,6 +36,8 @@ enum Paths {
     static var userDir: String { prefix + "/drive_c/users/" + NSUserName() }
     static var myGames: String { userDir + "/Documents/My Games/Skyrim Special Edition" }
     static var mods: String { game + "/mods" }
+    /// Keizaal Online's launcher (Electron, installed per Windows user in the prefix): scripts/keizaal.sh
+    static var keizaalExe: String { userDir + "/AppData/Local/Programs/skyrim-rp-launcher/keizaal-online.exe" }
     static let rosetta = "/Library/Apple/usr/libexec/oah/libRosettaRuntime"
 }
 
@@ -198,6 +200,8 @@ final class Launcher: ObservableObject {
     @Published var steam: SteamState = .stopped
     @Published var gameRunning = false
     @Published var loaderRunning = false
+    @Published var keizaalInstalled = false
+    @Published var keizaalRunning = false
     @Published var otherSteam = false          // tf2mt's Steam is running (same account)
     @Published var deploying = false
     @Published var steamWindow = false         // a Steam window is on screen (Show / Hide Steam button)
@@ -205,6 +209,7 @@ final class Launcher: ObservableObject {
     private var gamePIDs: [pid_t] = []
     private var steamToggled = Date.distantPast
     @Published var launching = false
+    @Published var launchingKeizaal = false   // the launch in progress is Keizaal Online's launcher, not Play
     @Published var mouseFix: PatchState = .unknown
     @Published var crashFix: PatchState = .unknown
     @Published var checksKnown = false   // the patch checks finished (until then they read as "not applied")
@@ -259,6 +264,10 @@ final class Launcher: ObservableObject {
             await MainActor.run {
                 self.gameRunning = kv["game"] == "1"
                 self.loaderRunning = kv["loader"] == "1"
+                self.keizaalInstalled = exists(Paths.keizaalExe)
+                let keizaal = kv["keizaal"] == "1"
+                if self.keizaalRunning && !keizaal && self.message == Launcher.keizaalOpenMessage { self.message = nil }   // closed: back to the initial state
+                self.keizaalRunning = keizaal
                 self.otherSteam = kv["other_steam"] == "1"
                 self.deploying = kv["deploy_lock"] == "1"
                 self.steamPIDs = pids; self.gamePIDs = games
@@ -547,6 +556,37 @@ final class Launcher: ObservableObject {
         }
     }
 
+    static let keizaalOpenMessage = "Keizaal Online's launcher is open — press Play there."
+
+    /// Keizaal Online: its launcher logs in, updates its files and starts the game itself (scripts/keizaal.sh). Before
+    /// it opens, the deployed files are listed the way Vortex does, so its updater leaves SkyrimMT's files alone.
+    func playKeizaal() {
+        guard !launching, !gameRunning else { return }
+        refreshChecks()
+        guard readyToPlay else { message = "Setup incomplete — see the Setup tab."; return }
+        guard !otherSteam else { message = "tf2mt's Steam is running with the same account — close it first."; return }
+        launching = true; launchingKeizaal = true
+        let mk = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
+        mk.recordLaunch()
+        mk.restoreDriftedBinaries()
+        do { try mk.writeVortexDeployment() } catch { message = "Couldn't list the deployed files for Keizaal: \(error)" }
+        Session.ensureHelper()
+        message = steam == .online ? "Opening Keizaal Online…" : "Starting Steam — waiting for login…"
+        Task.detached {
+            let r = SessionRunner.runSync([Paths.script("keizaal.sh")])
+            let logURL = URL(fileURLWithPath: Paths.logs + "/launcher.log")
+            if let h = try? FileHandle(forWritingTo: logURL) {
+                h.seekToEndOfFile(); h.write(Data(("=== Keizaal Online \(Date())\n" + r.output + "\n").utf8)); try? h.close()
+            }
+            await MainActor.run {
+                self.launching = false; self.launchingKeizaal = false
+                self.message = r.status == 0 ? Launcher.keizaalOpenMessage
+                    : "Keizaal Online didn't open — " + (r.output.split(separator: "\n").last.map(String.init) ?? "open Logs for details.")
+                self.refresh()
+            }
+        }
+    }
+
     func quitSkyrim() {
         for pid in gamePIDs { kill(pid, SIGTERM) }
         message = "Skyrim closed."
@@ -677,6 +717,10 @@ enum SessionRunner {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// nxm:// links (Nexus "Mod Manager Download"): handed to the mod manager, whose window opens.
     func application(_ application: NSApplication, open urls: [URL]) {
+        // skyrim-rp:// (Keizaal Online's Discord login coming back from the browser): to its launcher in the prefix
+        for u in urls where u.scheme?.lowercased() == "skyrim-rp" {
+            Task.detached { _ = shell(["/bin/bash", Paths.script("keizaal.sh"), u.absoluteString]) }
+        }
         for u in urls where u.scheme?.lowercased() == "nxm" {
             Task { @MainActor in
                 ModManagerModel.shared?.handleNxm(u)
@@ -1011,6 +1055,7 @@ struct ContentView: View {
                         launchOptions
                         updateControl
                         playButton
+                        if launcher.keizaalInstalled { keizaalButton }
                         HStack(spacing: 10) {
                             Button("Quit Skyrim") { launcher.quitSkyrim() }.disabled(!launcher.gameRunning)
                             if launcher.steam == .online {
@@ -1035,10 +1080,10 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 2)
             }
-            .frame(width: 980, height: 722, alignment: .top)   // full window incl. the hidden title bar strip
+            .frame(width: 980, height: 722 + keizaalRow, alignment: .top)   // full window incl. the hidden title bar strip
             .ignoresSafeArea(edges: .top)
         }
-        .frame(width: 980, height: 690)                       // window adds the 32 pt title-bar inset on top
+        .frame(width: 980, height: 690 + keizaalRow)          // window adds the 32 pt title-bar inset on top
         .animation(.easeInOut(duration: 0.2), value: launcher.message)
         .onReceive(NotificationCenter.default.publisher(for: .openModManager)) { _ in openWindow(id: "mods") }
         .onReceive(NotificationCenter.default.publisher(for: .openModManagerEssentials)) { _ in
@@ -1403,14 +1448,22 @@ struct ContentView: View {
         }
     }
 
+    /// Play's own launch in progress (not Keizaal Online's launcher)
+    private var launchingPlay: Bool { launcher.launching && !launcher.launchingKeizaal }
+
     private var status: some View {
         Card(title: "Status") {
             StatusRow(label: "Steam",
                       value: launcher.steam == .online ? "Online" : launcher.steam == .starting ? "Logging in…" : "Not running",
                       color: launcher.steam == .online ? .green : launcher.steam == .starting ? .yellow : .gray)
             StatusRow(label: "Skyrim",
-                      value: launcher.gameRunning ? "Running" : launcher.loaderRunning ? "Starting…" : launcher.launching ? "Launching…" : "Not running",
-                      color: launcher.gameRunning ? .green : (launcher.launching || launcher.loaderRunning) ? .yellow : .gray)
+                      value: launcher.gameRunning ? "Running" : launcher.loaderRunning ? "Starting…" : launchingPlay ? "Launching…" : "Not running",
+                      color: launcher.gameRunning ? .green : (launchingPlay || launcher.loaderRunning) ? .yellow : .gray)
+            if launcher.keizaalInstalled {
+                StatusRow(label: "Keizaal Online",
+                          value: launcher.keizaalRunning ? "Open" : launcher.launchingKeizaal ? "Starting…" : "Not running",
+                          color: launcher.keizaalRunning ? .green : launcher.launchingKeizaal ? .yellow : .gray)
+            }
             if launcher.otherSteam {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.skGoldLight)
@@ -1422,6 +1475,24 @@ struct ContentView: View {
         }
     }
 
+    /// Room for the Keizaal Online button under Play (the window is fixed-size).
+    private var keizaalRow: CGFloat { launcher.keizaalInstalled ? 58 : 0 }   // button + its Status row
+
+    /// Keizaal Online installed in this prefix: its launcher (login, updates) starts the game; same preparation as Play.
+    private var keizaalButton: some View {
+        Button {
+            mods.prepareForPlay(status: { launcher.message = $0 }) { launcher.playKeizaal() }
+        } label: {
+            HStack(spacing: 8) {
+                if launcher.launchingKeizaal { ProgressView().controlSize(.small) }
+                Text(launcher.launchingKeizaal ? "Starting Keizaal Online…" : launcher.keizaalRunning ? "Keizaal Online is open" : "Start Keizaal Online")
+            }.frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SmallButtonStyle())
+        .disabled(launcher.gameRunning || launcher.launching || !launcher.readyToPlay || launcher.otherSteam)
+        .help("Opens Keizaal Online's launcher (Discord login, updates): press Play there.")
+    }
+
     private var playButton: some View {
         let canPlay = !launcher.gameRunning && !launcher.launching && launcher.readyToPlay && !launcher.otherSteam
         return Button {
@@ -1429,8 +1500,8 @@ struct ContentView: View {
             mods.prepareForPlay(status: { launcher.message = $0 }) { launcher.play(hud: h, frameLog: f, skse: sk, extraArgs: x) }
         } label: {
             HStack(spacing: 12) {
-                if launcher.launching { ProgressView().controlSize(.small) }
-                Text(launcher.gameRunning ? "RUNNING" : launcher.launching ? "LAUNCHING" : launcher.readyToPlay ? "PLAY" : "SET UP")
+                if launchingPlay { ProgressView().controlSize(.small) }
+                Text(launcher.gameRunning ? "RUNNING" : launchingPlay ? "LAUNCHING" : launcher.readyToPlay ? "PLAY" : "SET UP")
             }
         }
         .buttonStyle(PlayButtonStyle(enabled: canPlay))

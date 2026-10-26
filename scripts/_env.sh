@@ -48,6 +48,7 @@ loader_pids()   { win_pids 'skse64_loader\.exe|SkyrimSELauncher\.exe'; }   # sta
 game_running()  { [ -n "$(game_pids)" ]; }
 loader_running(){ [ -n "$(loader_pids)" ]; }
 steam_running() { [ -n "$(win_pids 'steam\.exe')" ]; }
+keizaal_running(){ [ -n "$(win_pids 'keizaal-online\.exe')" ]; }   # Keizaal Online's launcher (scripts/keizaal.sh)
 server_up()     { pgrep -f "$SKYRIM_HOME/wine/.*wineserver" >/dev/null; }
 
 # tf2mt's Steam (same Steam account → "playing on another device" conflicts, PLAN §4.2). Never kill it from here:

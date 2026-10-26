@@ -35,6 +35,10 @@ while :; do
   sleep 1
   if game_running; then seen=1; loader=0; quiet=0; gone=0; continue; fi
   if loader_running; then loader=1; quiet=0; gone=0; continue; fi      # Bethesda launcher / SKSE loader still open
+  if keizaal_running; then   # Keizaal Online's launcher stays open around its games (as on Windows): keep the session
+    if [ $seen = 1 ]; then mkdir -p "$SKYRIM_HOME/config/modkit"; date -u +%Y-%m-%dT%H:%M:%SZ >> "$SKYRIM_HOME/config/modkit/game-exits.tsv"; fi
+    seen=0; loader=0; quiet=0; gone=0; continue
+  fi
   if alive "$RUN/launch-pending"; then quiet=0; gone=0; continue; fi    # a launch script is starting Steam/Skyrim
   if alive "$RUN/tool-pending"; then quiet=0; gone=0; continue; fi      # a modding tool (Mod Manager → Tools) is running
   if ! server_up; then

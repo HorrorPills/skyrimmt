@@ -17,7 +17,7 @@ swift make_icon.swift "$OUT/SkyrimMT.iconset" "$OUT/icon-preview.png"
 iconutil -c icns "$OUT/SkyrimMT.iconset" -o "$RES/SkyrimMT.icns"
 # bundled SkyrimMT: only what the launcher runs (scripts, configs, wine patch tools, licence notes)
 cp -R "$ROOT/scripts" "$ROOT/config" "$RES/skyrimmt/"
-cp -R "$ROOT/tools/wine-patches" "$RES/skyrimmt/tools/"
+cp -R "$ROOT/tools/wine-patches" "$ROOT/tools/keizaal" "$RES/skyrimmt/tools/"
 cp "$ROOT/THIRD_PARTY.md" "$RES/skyrimmt/"
 # unattended benchmark (Mod Manager → Performance): the script + its keyboard/display helpers
 mkdir -p "$RES/skyrimmt/tools/bench" "$RES/skyrimmt/build/tools"
@@ -48,6 +48,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>Nexus Mods download</string>
     <key>CFBundleURLSchemes</key><array><string>nxm</string></array>
+  </dict><dict>
+    <key>CFBundleURLName</key><string>Keizaal Online login</string>
+    <key>CFBundleURLSchemes</key><array><string>skyrim-rp</string></array>
   </dict></array>
 </dict></plist>
 PLIST

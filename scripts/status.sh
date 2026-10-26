@@ -3,7 +3,7 @@
 # tf2mt's Steam is running (same Steam account → conflicts). key=value lines. One pgrep + one lsof per runtime
 # (same ownership rule as win_pids in _env.sh).
 . "$(dirname "$0")/_env.sh"
-cands=$(LC_ALL=C pgrep -fil 'skyrimse\.exe|skse64_loader\.exe|skyrimselauncher\.exe|steam\.exe|steamwebhelper\.exe' | LC_ALL=C awk '{
+cands=$(LC_ALL=C pgrep -fil 'skyrimse\.exe|skse64_loader\.exe|skyrimselauncher\.exe|steam\.exe|steamwebhelper\.exe|keizaal-online\.exe' | LC_ALL=C awk '{
   pid = $1; sub(/^[0-9]+ /, ""); i = index(tolower($0), ".exe"); if (!i) next
   a0 = tolower(substr($0, 1, i + 3)); n = split(a0, p, "\\"); print pid, p[n] }')
 ours=$( [ -n "$cands" ] && lsof -t "$NTDLL" 2>/dev/null | sort -u)
@@ -21,4 +21,5 @@ if [ $steam = 1 ]; then
 fi
 echo "steam=$steam online=$online"
 echo "other_steam=$([ -n "$(pick steam.exe "$theirs")" ] && echo 1 || echo 0)"
+echo "keizaal=$([ -n "$(pick keizaal-online.exe "$ours")" ] && echo 1 || echo 0)"   # Keizaal Online's launcher
 echo "deploy_lock=$([ -d "$SKYRIM_HOME/run/deploy.lock" ] && echo 1 || echo 0)"

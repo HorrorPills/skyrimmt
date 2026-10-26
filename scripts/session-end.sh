@@ -2,6 +2,7 @@
 # End the SkyrimMT session cleanly: Steam shut down, wineserver stopped, orphans swept. Only ever touches THIS
 # prefix's wineserver (WINESERVER -k uses our WINEPREFIX) and THIS runtime's processes (wine-sweep.sh).
 # Idempotent and locked: safe to run from several places.
+#   session-end.sh --force   also closes Skyrim and its loader first (switching game folders)
 . "$(dirname "$0")/_env.sh"
 RUN="$SKYRIM_HOME/run"; mkdir -p "$RUN" "$SKYRIM_HOME/logs"; LOG="$SKYRIM_HOME/logs/session.log"
 log() { echo "$(date '+%F %T') end[$$]: $*" >> "$LOG"; }
@@ -12,6 +13,10 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   rm -rf "$LOCK"; mkdir "$LOCK" || exit 0
 fi
 echo $$ > "$LOCK/pid"; trap 'rm -rf "$LOCK"' EXIT
+if [ "${1:-}" = --force ]; then
+  for p in $(game_pids) $(loader_pids); do kill "$p" 2>/dev/null; done
+  for _ in $(seq 15); do game_running || loader_running || break; sleep 1; done
+fi
 if game_running || loader_running; then log "Skyrim is running: nothing to do"; exit 0; fi
 log "start (steam running: $(steam_running && echo yes || echo no))"
 if steam_running; then

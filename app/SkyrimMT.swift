@@ -440,10 +440,45 @@ final class Launcher: ObservableObject {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.message = "Choose where SkyrimMT keeps Wine, Steam and Skyrim (needs ~25 GB, more with mods)"
-        if panel.runModal() == .OK, let url = panel.url {
-            UserDefaults.standard.set(url.path, forKey: "gameHome")
-            artVersion += 1
-            refreshPatches(); refreshSettings(); refresh()
+        if panel.runModal() == .OK, let url = panel.url { switchGameFolder(to: url.path) }
+    }
+
+    /// Game folders to switch between: the ones used before, the current one and SkyrimMT installs found in ~/Games.
+    static func gameFolders() -> [String] {
+        let games = Paths.home + "/Games"
+        let found = ((try? FileManager.default.contentsOfDirectory(atPath: games)) ?? []).map { games + "/" + $0 }
+            .filter { exists($0 + "/prefix/system.reg") && exists($0 + "/config/modkit") }   // not tf2mt's (same layout)
+        let used = UserDefaults.standard.stringArray(forKey: "gameHomes") ?? []
+        return Set(used + found + [Paths.game]).filter { exists($0) }
+            .sorted { ($0 as NSString).lastPathComponent.localizedStandardCompare(($1 as NSString).lastPathComponent) == .orderedAscending }
+    }
+
+    /// "keizaal — Keizaal Online": the folder's name and its active Mod Manager profile.
+    static func gameFolderLabel(_ path: String) -> String {
+        let profile = (try? String(contentsOfFile: path + "/config/modkit/current-profile", encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        return (path as NSString).lastPathComponent + (profile.map { " — \($0)" } ?? "")
+    }
+
+    /// Switch game folders: everything running from the current one closes (Skyrim included: a switch is never an
+    /// accident), then SkyrimMT restarts on the new folder, with the Mod Manager if it was open (ModKit, the session
+    /// helper and the status polling all follow the folder they started with).
+    func switchGameFolder(to path: String) {
+        guard path != Paths.game else { return }
+        message = "Closing Skyrim and Steam…"
+        let reopenMods = NSApp.windows.contains { $0.title == "SkyrimMT Mods" && $0.isVisible }
+        Task.detached {
+            _ = shell(["/bin/bash", Paths.script("session-end.sh"), "--force"])   // still the current folder's environment
+            await MainActor.run {
+                var used = UserDefaults.standard.stringArray(forKey: "gameHomes") ?? []
+                for p in [Paths.game, path] where !used.contains(p) { used.append(p) }
+                UserDefaults.standard.set(used, forKey: "gameHomes")
+                UserDefaults.standard.set(path, forKey: "gameHome")
+                UserDefaults.standard.set(reopenMods, forKey: "reopenModManager")
+                let pid = ProcessInfo.processInfo.processIdentifier
+                _ = spawnDetached(["/bin/bash", "-c", "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; open \"$1\"", "relaunch", Bundle.main.bundlePath])
+                NSApp.terminate(nil)
+            }
         }
     }
 
@@ -1018,6 +1053,7 @@ struct ContentView: View {
     @FocusState private var argsFocused: Bool
     @AppStorage("useSKSE") private var useSKSE = true
     @AppStorage("tab") private var tabRaw = Tab.game.rawValue   // (@State needs the Xcode macro plugin)
+    @AppStorage("folderSwitchChoice") private var folderChoice = ""   // Setup → game folder picked to switch to
     private var tab: Tab { Tab(rawValue: tabRaw) ?? .game }
 
     var body: some View {
@@ -1093,6 +1129,9 @@ struct ContentView: View {
         .onChange(of: mods.versionCurrent) { _ in launcher.refreshSettings() }
         .onChange(of: launcher.checksKnown) { known in if known && !launcher.setupComplete { tabRaw = Tab.setup.rawValue } }
         .onAppear {
+            if UserDefaults.standard.bool(forKey: "reopenModManager") {   // restarted by a game folder switch
+                UserDefaults.standard.removeObject(forKey: "reopenModManager"); openWindow(id: "mods")
+            }
             if autoUpdateCheck { updater.startAutomaticChecks() }
             if launcher.checksKnown && !launcher.setupComplete { tabRaw = Tab.setup.rawValue }   // first run: guide through Setup
             mods.gameRunning = { [weak launcher] in launcher?.gameRunning ?? false }
@@ -1438,9 +1477,21 @@ struct ContentView: View {
                     RowText(title: c.title, detail: c.ok ? "Ready." : c.fix)
                 }
             }
-            HStack {
+            HStack(spacing: 10) {
                 RowText(title: "Game folder", detail: Paths.game)
-                Button("Change…") { launcher.chooseGameFolder() }.buttonStyle(SmallButtonStyle()).frame(width: 90)
+                let target = folderChoice.isEmpty || !exists(folderChoice) ? Paths.game : folderChoice
+                Picker("", selection: Binding(get: { target }, set: { v in
+                    if v == "\u{0}other" { launcher.chooseGameFolder() } else { folderChoice = v }
+                })) {
+                    ForEach(Launcher.gameFolders(), id: \.self) { Text(Launcher.gameFolderLabel($0)).tag($0) }
+                    Divider()
+                    Text("Other folder…").tag("\u{0}other")
+                }
+                .labelsHidden().controlSize(.large).fixedSize()   // Switch's height; its own width keeps the 10 pt gap
+                .help("SkyrimMT installs found in ~/Games and folders used before")
+                Button("Switch") { launcher.switchGameFolder(to: target) }
+                    .buttonStyle(SmallButtonStyle()).frame(width: 76).disabled(target == Paths.game)
+                    .help("Closes Skyrim and Steam, then restarts SkyrimMT on this folder")
             }
             Button("Re-check") { launcher.refreshPatches(); launcher.refreshSettings(); launcher.refresh() }.buttonStyle(SmallButtonStyle())
             Divider().overlay(Color.white.opacity(0.06))

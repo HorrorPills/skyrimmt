@@ -301,7 +301,8 @@ final class Launcher: ObservableObject {
             func state(_ tool: String) -> PatchState {
                 guard exists(tool), exists(Paths.wine) else { return .unknown }
                 let out = shell(["/bin/bash", tool, "status"]).output
-                return out.hasPrefix("patched") ? .applied : out.hasPrefix("original") ? .original : .unknown
+                // "upstream": the DXMT build fixes it itself (dxmt_purevirtual_return.sh), as good as applied
+                return out.hasPrefix("patched") || out.hasPrefix("upstream") ? .applied : out.hasPrefix("original") ? .original : .unknown
             }
             let m = state(Paths.mousePatch), c = state(Paths.dxmtPatch)
             await MainActor.run { self.mouseFix = m; self.crashFix = c; self.refreshChecks(); self.checksKnown = true }

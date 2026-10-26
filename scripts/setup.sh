@@ -119,6 +119,7 @@ DXMTP="$SKYRIMMT_ROOT/tools/wine-patches/dxmt_purevirtual_return.sh"
 st=$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$DXMTP" status 2>&1)
 case $st in
   patched)  skip "already applied" ;;
+  upstream) skip "not needed: this DXMT build has the fix" ;;
   original|mixed) SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$DXMTP" apply >/dev/null && ok "applied" || fail "DXMT patch failed" ;;
   *)        todo "unknown DXMT build — fix not applied (Skyrim may quit after the logo)" ;;
 esac

@@ -1256,14 +1256,15 @@ final class ModManagerModel: ObservableObject {
     /// returns a short summary for the status line.
     nonisolated func runStaleGenerators(_ k: ModKit, status: (String) async -> Void) async -> String {
         var m = ""
-        if !k.bodySlideInstalled && k.bodySlideNeedsRun() { do { try await ensureTool(k, "bodyslide", status: status) } catch { m += " \(error)" } }
-        if !k.pandoraInstalled && k.pandoraNeedsRun() { do { try await ensureTool(k, "pandora", status: status) } catch { m += " \(error)" } }
-        if k.bodySlideInstalled && k.bodySlideNeedsRun() {
+        let bodySlide = k.autoBodySlide, pandora = k.autoPandora   // the profile's "Run automatically"
+        if bodySlide && !k.bodySlideInstalled && k.bodySlideNeedsRun() { do { try await ensureTool(k, "bodyslide", status: status) } catch { m += " \(error)" } }
+        if pandora && !k.pandoraInstalled && k.pandoraNeedsRun() { do { try await ensureTool(k, "pandora", status: status) } catch { m += " \(error)" } }
+        if bodySlide && k.bodySlideInstalled && k.bodySlideNeedsRun() {
             await status("Building bodies and outfits (BodySlide)…")
             do { let r = try k.runBodySlide(); m += r.files > 0 ? " Bodies built (\(r.outfits) outfits\(r.failed.isEmpty ? "" : ", \(r.failed.count) failed"))." : "" }
             catch { m += " \(error)" }
         }
-        if k.pandoraInstalled && k.pandoraNeedsRun() {
+        if pandora && k.pandoraInstalled && k.pandoraNeedsRun() {
             await status("Generating animations (Pandora)…")
             do { let p = try k.runPandora(); m += p.files > 0 ? " Animations regenerated." : "" }
             catch { m += " \(error)" }
@@ -1276,8 +1277,8 @@ final class ModManagerModel: ObservableObject {
         guard !gameRunning() else { play(); return }
         let k = kit
         Task.detached {
-            let stale = ((k.bodySlideInstalled || ModManagerModel.toolAvailable(k, "bodyslide")) && k.bodySlideNeedsRun())
-                || ((k.pandoraInstalled || ModManagerModel.toolAvailable(k, "pandora")) && k.pandoraNeedsRun())
+            let stale = (k.autoBodySlide && (k.bodySlideInstalled || ModManagerModel.toolAvailable(k, "bodyslide")) && k.bodySlideNeedsRun())
+                || (k.autoPandora && (k.pandoraInstalled || ModManagerModel.toolAvailable(k, "pandora")) && k.pandoraNeedsRun())
             guard stale else { await MainActor.run { play() }; return }
             let m = await self.runStaleGenerators(k) { t in await MainActor.run { self.busy = t; status(t) } }
             await MainActor.run {
@@ -1616,6 +1617,12 @@ final class ModManagerModel: ObservableObject {
                 }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.refreshInstantSwitching() } }
         }
+    }
+
+    /// The current profile's "Run automatically" for Pandora / BodySlide (manual Generate/Build always work).
+    func setAutoGenerate(pandora: Bool? = nil, bodySlide: Bool? = nil) {
+        do { try kit.setAutoGenerate(profile, pandora: pandora, bodySlide: bodySlide); refreshPandora(); refreshBodySlide() }
+        catch { message = "\(error)" }
     }
 
     func setSeparateSaves(_ name: String, _ on: Bool) {
@@ -2103,10 +2110,15 @@ struct ModManagerView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Pandora Behaviour Engine (native)").font(.headline)
                         Text(model.pandoraInstalled
-                             ? "Builds animation behaviours for Nemesis, Pandora and FNIS mods. Runs automatically when animation mods change."
+                             ? "Builds animation behaviours for Nemesis, Pandora and FNIS mods. Patches whose mod isn't installed stay off."
                              : "Not installed in this build.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if let r = model.pandoraLastRun { Text("Last run: \(r)").font(.caption).foregroundStyle(.secondary) }
+                        if model.pandoraInstalled {
+                            Toggle("Run automatically when animation mods change", isOn: Binding(get: { model.kit.autoPandora }, set: { model.setAutoGenerate(pandora: $0) }))
+                                .toggleStyle(.checkbox).font(.caption)
+                                .help("This profile only. Off for profiles installed from a collection, like Vortex.")
+                        }
                     }
                     Spacer()
                     if model.pandoraInstalled {
@@ -2164,10 +2176,15 @@ struct ModManagerView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("BodySlide (native)").font(.headline)
                         Text(model.bodySlideInstalled
-                             ? "Builds bodies and outfits for your body mod. Runs automatically when body or outfit mods change."
+                             ? "Builds bodies and outfits for your body mod."
                              : "Not installed in this build.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if let r = model.bodySlideLastRun { Text("Last run: \(r)").font(.caption).foregroundStyle(.secondary) }
+                        if model.bodySlideInstalled {
+                            Toggle("Run automatically when body or outfit mods change", isOn: Binding(get: { model.kit.autoBodySlide }, set: { model.setAutoGenerate(bodySlide: $0) }))
+                                .toggleStyle(.checkbox).font(.caption)
+                                .help("This profile only. Off for profiles installed from a collection, like Vortex.")
+                        }
                     }
                     Spacer()
                     if model.bodySlideInstalled {

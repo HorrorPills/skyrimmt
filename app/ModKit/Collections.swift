@@ -292,7 +292,11 @@ extension ModKit {
             try? FileManager.default.copyItem(at: b.appendingPathComponent("collection.json"), to: keep)
         }
         let previous = currentProfileName
-        if profile(profileName) == nil { try createProfile(profileName) }
+        if profile(profileName) == nil {
+            try createProfile(profileName)
+            // Vortex never runs Pandora/BodySlide for a collection's players: its profile starts the same way
+            try setAutoGenerate(profileName, pandora: false, bodySlide: false)
+        }
         // installs go into the collection's profile (no deploy yet)
         try atomicWrite(profileName + "\n", to: currentURL)
         var p = try currentProfile(); p.mods = []; if let v = profile(profileName)?.gameVersion { p.gameVersion = v }; try saveProfile(p)

@@ -22,8 +22,8 @@ extension ModManagerModel {
             let reqs = (try? await k.checkRequirements { try await c.requirements(modID: $0) }) ?? []
             let masters = k.missingMasters()
             let loIssues = k.loadOrder().validate()
-            let bsStale = k.bodySlideInstalled && k.bodySlideNeedsRun()
-            let pdStale = k.pandoraInstalled && k.pandoraNeedsRun()
+            let bsStale = k.autoBodySlide && k.bodySlideInstalled && k.bodySlideNeedsRun()   // off: the player chose not to
+            let pdStale = k.autoPandora && k.pandoraInstalled && k.pandoraNeedsRun()
             let dirty = (try? k.isDirty()) ?? false
             let helper = await MainActor.run { self.lootHelper }
             let dirtyPlugins = ModManagerModel.dirtyPlugins(k, helper: helper)

@@ -45,6 +45,8 @@ public struct Profile: Codable, Equatable {
     public var separateSaves = false
     public var gameVersion: String?      // nil/"steam" = Steam's install; else a pinned version (versions/<v>)
     public var lockedPlugins: [String]?  // plugins whose position sorting never changes (lowercased)
+    public var autoPandora: Bool?        // nil = on: Pandora reruns when animation mods change (collections: off)
+    public var autoBodySlide: Bool?      // nil = on: BodySlide rebuilds when body/outfit mods change (collections: off)
 }
 
 struct StoreFile<T: Codable>: Codable { var version: Int; var items: T }

@@ -8,6 +8,17 @@ extension ModKit {
         String(profile.map { "/:\\".contains($0) ? "_" : $0 })
     }
 
+    /// Whether the generators rerun on their own (deploy, Play) for the current profile; "Generate now" always works.
+    public var autoPandora: Bool { (try? currentProfile())?.autoPandora ?? true }
+    public var autoBodySlide: Bool { (try? currentProfile())?.autoBodySlide ?? true }
+
+    public func setAutoGenerate(_ name: String, pandora: Bool? = nil, bodySlide: Bool? = nil) throws {
+        guard var p = profile(name) else { throw ModKitError.noSuchProfile(name) }
+        if let pandora { p.autoPandora = pandora }
+        if let bodySlide { p.autoBodySlide = bodySlide }
+        try saveProfile(p)
+    }
+
     /// Replace the profile's output mod `id` with the files in `dir` (moved), enable it just below Overwrite, deploy.
     func installGeneratedOutput(id: String, name: String, folder: String, from dir: URL, profile: inout Profile) throws {
         let fm = FileManager.default

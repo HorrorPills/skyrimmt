@@ -77,13 +77,17 @@ case $st in
 esac
 
 step "Wine prefix ($WINEPREFIX)"
-win10() { grep -q '"ProductName"="Windows 10' "$WINEPREFIX/system.reg" 2>/dev/null; }
-if [ -f "$WINEPREFIX/system.reg" ] && win10; then skip "ready (Windows 10)"
+# wine.inf writes "Windows 10 Pro", winecfg /v win10 writes "Microsoft Windows 10"
+win10() { grep -qE '"ProductName"="(Microsoft )?Windows 10' "$WINEPREFIX/system.reg" 2>/dev/null; }
+# a wineboot cut short (session ended mid-setup) leaves the 32-bit side empty: Steam's installer then dies on kernel32
+complete() { [ -f "$WINEPREFIX/system.reg" ] && [ -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; }
+if complete && win10; then skip "ready (Windows 10)"
 else
-  if [ ! -f "$WINEPREFIX/system.reg" ]; then
+  if ! complete; then
+    rm -f "$WINEPREFIX/.update-timestamp"   # else wineboot -u sees an up-to-date prefix and installs nothing
     WINEDLLOVERRIDES="mscoree,mshtml=" "$WINE" wineboot -u >/dev/null 2>&1
     "$WINESERVER" -w
-    [ -f "$WINEPREFIX/system.reg" ] || fail "wineboot did not create the prefix"
+    complete || fail "wineboot did not create the prefix (delete $WINEPREFIX and run setup again)"
   fi
   win10 || { "$WINE" winecfg /v win10 >/dev/null 2>&1; "$WINESERVER" -w; }
   win10 && ok "created (Windows 10)" || fail "could not set Windows 10 mode"

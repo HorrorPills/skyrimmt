@@ -1005,6 +1005,7 @@ struct PlayButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.title(30)).tracking(4)
+            .lineLimit(1).minimumScaleFactor(0.5).padding(.horizontal, 16)   // "Start Keizaal Online" is wider than PLAY
             .foregroundStyle(enabled ? Color.skDark : Color.skCream.opacity(0.6))
             .frame(maxWidth: .infinity, minHeight: 70)
             .background(
@@ -1015,6 +1016,16 @@ struct PlayButtonStyle: ButtonStyle {
             .shadow(color: enabled ? Color.skGold.opacity(0.45) : .clear, radius: configuration.isPressed ? 4 : 14, y: 4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Play or Start Keizaal Online: whichever is the folder's main launch gets the big gold button.
+struct LaunchButtonStyle: ButtonStyle {
+    let big: Bool
+    let enabled: Bool
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if big { PlayButtonStyle(enabled: enabled).makeBody(configuration: configuration) }
+        else { SmallButtonStyle().makeBody(configuration: configuration) }
     }
 }
 
@@ -1107,8 +1118,8 @@ struct ContentView: View {
                         status
                         launchOptions
                         updateControl
+                        if launcher.keizaalInstalled { keizaalButton }   // the folder is for Keizaal: plain Play goes under it
                         playButton
-                        if launcher.keizaalInstalled { keizaalButton }
                         HStack(spacing: 10) {
                             Button("Quit Skyrim") { launcher.quitSkyrim() }.disabled(!launcher.gameRunning)
                             if launcher.steam == .online {
@@ -1548,33 +1559,37 @@ struct ContentView: View {
 
     /// Keizaal Online installed in this prefix: its launcher (login, updates) starts the game; same preparation as Play.
     private var keizaalButton: some View {
-        Button {
+        let canStart = !launcher.gameRunning && !launcher.launching && launcher.readyToPlay && !launcher.otherSteam
+        return Button {
             mods.prepareForPlay(status: { launcher.message = $0 }) { launcher.playKeizaal() }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 if launcher.launchingKeizaal { ProgressView().controlSize(.small) }
-                Text(launcher.launchingKeizaal ? "Starting Keizaal Online…" : launcher.keizaalRunning ? "Keizaal Online is open" : "Start Keizaal Online")
-            }.frame(maxWidth: .infinity)
+                Text(launcher.launchingKeizaal ? "Starting…" : launcher.keizaalRunning ? "Keizaal is open" : "Start Keizaal Online")
+            }
         }
-        .buttonStyle(SmallButtonStyle())
-        .disabled(launcher.gameRunning || launcher.launching || !launcher.readyToPlay || launcher.otherSteam)
+        .buttonStyle(LaunchButtonStyle(big: true, enabled: canStart))
+        .disabled(!canStart)
+        .keyboardShortcut(.defaultAction)
         .help("Opens Keizaal Online's launcher (Discord login, updates): press Play there.")
     }
 
     private var playButton: some View {
         let canPlay = !launcher.gameRunning && !launcher.launching && launcher.readyToPlay && !launcher.otherSteam
+        let big = !launcher.keizaalInstalled
         return Button {
             let (h, f, sk, x) = (metalHUD, frameLog, useSKSE, extraArgs)
             mods.prepareForPlay(status: { launcher.message = $0 }) { launcher.play(hud: h, frameLog: f, skse: sk, extraArgs: x) }
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: big ? 12 : 8) {
                 if launchingPlay { ProgressView().controlSize(.small) }
-                Text(launcher.gameRunning ? "RUNNING" : launchingPlay ? "LAUNCHING" : launcher.readyToPlay ? "PLAY" : "SET UP")
-            }
+                Text(big ? (launcher.gameRunning ? "RUNNING" : launchingPlay ? "LAUNCHING" : launcher.readyToPlay ? "PLAY" : "SET UP")
+                         : (launcher.gameRunning ? "Skyrim is running" : launchingPlay ? "Launching Skyrim…" : launcher.readyToPlay ? "Play Skyrim" : "Set up"))
+            }.frame(maxWidth: .infinity)
         }
-        .buttonStyle(PlayButtonStyle(enabled: canPlay))
+        .buttonStyle(LaunchButtonStyle(big: big, enabled: canPlay))
         .disabled(!canPlay)
-        .keyboardShortcut(.defaultAction)
+        .keyboardShortcut(big ? .defaultAction : nil)
     }
 }
 

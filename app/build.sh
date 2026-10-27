@@ -37,6 +37,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>SkyrimMT</string>
   <key>CFBundleDisplayName</key><string>SkyrimMT</string>
   <key>CFBundleIdentifier</key><string>local.skyrimmt.launcher</string>
+  <key>NSMicrophoneUsageDescription</key><string>Games running in SkyrimMT can use the microphone for voice chat (Keizaal Online, SkyMP).</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -94,6 +95,7 @@ cat > "$SES/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>SkyrimMT Session</string>
   <key>CFBundleIdentifier</key><string>local.skyrimmt.session</string>
+  <key>NSMicrophoneUsageDescription</key><string>Games running in SkyrimMT can use the microphone for voice chat (Keizaal Online, SkyMP).</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>

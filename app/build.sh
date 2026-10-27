@@ -19,11 +19,14 @@ iconutil -c icns "$OUT/SkyrimMT.iconset" -o "$RES/SkyrimMT.icns"
 cp -R "$ROOT/scripts" "$ROOT/config" "$RES/skyrimmt/"
 cp -R "$ROOT/tools/wine-patches" "$ROOT/tools/keizaal" "$RES/skyrimmt/tools/"
 cp "$ROOT/THIRD_PARTY.md" "$RES/skyrimmt/"
-# unattended benchmark (Mod Manager → Performance): the script + its keyboard/display helpers
-mkdir -p "$RES/skyrimmt/tools/bench" "$RES/skyrimmt/build/tools"
-cp "$ROOT/tools/bench/bench.sh" "$ROOT/tools/bench/analyze.py" "$ROOT/tools/bench/ini_merge.py" "$RES/skyrimmt/tools/bench/"
-swiftc -O "$ROOT/tools/bench/gamekeys.swift" -o "$RES/skyrimmt/build/tools/gamekeys"
-clang -O2 "$ROOT/tools/bench/displaystate.c" -framework CoreGraphics -framework IOKit -framework CoreFoundation -o "$RES/skyrimmt/build/tools/displaystate"
+# unattended benchmark (Mod Manager → Performance): the script + its keyboard/display helpers. Not in the public
+# repository: a clone builds without it (the Performance page then can't measure)
+if [ -d "$ROOT/tools/bench" ]; then
+  mkdir -p "$RES/skyrimmt/tools/bench" "$RES/skyrimmt/build/tools"
+  cp "$ROOT/tools/bench/bench.sh" "$ROOT/tools/bench/analyze.py" "$ROOT/tools/bench/ini_merge.py" "$RES/skyrimmt/tools/bench/"
+  swiftc -O "$ROOT/tools/bench/gamekeys.swift" -o "$RES/skyrimmt/build/tools/gamekeys"
+  clang -O2 "$ROOT/tools/bench/displaystate.c" -framework CoreGraphics -framework IOKit -framework CoreFoundation -o "$RES/skyrimmt/build/tools/displaystate"
+else echo "warning: tools/bench missing — Performance benchmark not bundled"; fi
 # frame-time recording proxy (Debug → Record frame times)
 if command -v x86_64-w64-mingw32-gcc >/dev/null || [ -x /opt/homebrew/bin/x86_64-w64-mingw32-gcc ]; then
   mkdir -p "$RES/skyrimmt/build/frametrace"

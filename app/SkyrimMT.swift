@@ -1581,6 +1581,7 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 if launcher.launchingKeizaal { ProgressView().controlSize(.small) }
                 Text(launcher.launchingKeizaal ? "Starting…" : launcher.keizaalRunning ? "Keizaal is open" : "Start Keizaal Online")
+                    .tracking(0.5)   // PLAY's wide spacing makes this long label too wide
             }
         }
         .buttonStyle(LaunchButtonStyle(big: true, enabled: canStart))

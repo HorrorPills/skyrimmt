@@ -266,7 +266,7 @@ final class Launcher: ObservableObject {
                 self.loaderRunning = kv["loader"] == "1"
                 self.keizaalInstalled = exists(Paths.keizaalExe)
                 let keizaal = kv["keizaal"] == "1"
-                if self.keizaalRunning && !keizaal && self.message == Launcher.keizaalOpenMessage { self.message = nil }   // closed: back to the initial state
+                if self.keizaalRunning && !keizaal && self.message?.hasPrefix(Launcher.keizaalOpenMessage) == true { self.message = nil }   // closed: back to the initial state
                 self.keizaalRunning = keizaal
                 self.otherSteam = kv["other_steam"] == "1"
                 self.deploying = kv["deploy_lock"] == "1"
@@ -631,7 +631,8 @@ final class Launcher: ObservableObject {
             }
             await MainActor.run {
                 self.launching = false; self.launchingKeizaal = false
-                self.message = r.status == 0 ? Launcher.keizaalOpenMessage
+                let warning = r.output.split(separator: "\n").last { $0.hasPrefix("warning: ") }?.dropFirst(9)
+                self.message = r.status == 0 ? warning.map { Launcher.keizaalOpenMessage + "\n" + $0 } ?? Launcher.keizaalOpenMessage
                     : "Keizaal Online didn't open — " + (r.output.split(separator: "\n").last.map(String.init) ?? "open Logs for details.")
                 self.refresh()
             }

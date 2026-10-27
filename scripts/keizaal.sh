@@ -19,11 +19,15 @@ for _ in $(seq 120); do [ -d "$RUN/deploy.lock" ] || break; sleep 1; done
 
 if ! game_running; then
   # Keizaal's NirnLabUIPlatform with CPU frames under Wine (tools/keizaal/README.md): only over the exact DLL Keizaal
-  # ships, never over another version
-  nl="$GAMEDIR/Data/NirnLabUIPlatform/NirnLabUIPlatform.dll"
-  if [ "$(shasum -a 256 "$nl" 2>/dev/null | cut -c1-64)" = b2f564afc796ed7c07c3a2993d229fa13aa20b1fc9ba23767229adc1519d13cf ]; then
-    cp "$SKYRIMMT_ROOT/tools/keizaal/NirnLabUIPlatform.dll" "$nl" && echo "in-game UI: NirnLabUIPlatform with CPU frames"
-  fi
+  # ships, never over another version. Another version (a Keizaal update) is left alone and reported: the app shows
+  # "warning: " lines
+  nl="$GAMEDIR/Data/NirnLabUIPlatform/NirnLabUIPlatform.dll"; ours="$SKYRIMMT_ROOT/tools/keizaal/NirnLabUIPlatform.dll"
+  case "$(shasum -a 256 "$nl" 2>/dev/null | cut -c1-64)" in
+    b2f564afc796ed7c07c3a2993d229fa13aa20b1fc9ba23767229adc1519d13cf)
+      cp "$ours" "$nl" && echo "in-game UI: NirnLabUIPlatform with CPU frames" ;;
+    "" | "$(shasum -a 256 "$ours" | cut -c1-64)") ;;
+    *) echo "warning: Keizaal updated NirnLabUIPlatform — SkyrimMT's fix no longer applies, the in-game UI may stay invisible." ;;
+  esac
   # Keizaal's UI asks for its fonts at /assets/… from a file:// page (the drive root): relative paths find them
   css="$GAMEDIR/Data/Platform/UI/assets/app.css"
   grep -q 'url(/assets/' "$css" 2>/dev/null && sed -i '' 's#url(/assets/#url(./#g' "$css" && echo "in-game UI: font paths fixed"

@@ -675,6 +675,16 @@ final class Launcher: ObservableObject {
         steamWindow = false; steamToggled = Date()
     }
 
+    /// Steam's F12 screenshots of Skyrim SE (app 489830), for the Steam account that took the latest ones.
+    func openScreenshots() {
+        let users = Paths.steamDir + "/userdata"
+        let dirs = ((try? FileManager.default.contentsOfDirectory(atPath: users)) ?? [])
+            .map { users + "/" + $0 + "/760/remote/489830/screenshots" }.filter(exists)
+        let mtime = { (p: String) in (try? FileManager.default.attributesOfItem(atPath: p)[.modificationDate] as? Date) ?? .distantPast }
+        guard let dir = dirs.max(by: { mtime($0) < mtime($1) }) else { message = "No screenshots yet — press F12 in game."; return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: dir))
+    }
+
     func open(_ path: String) {
         try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
@@ -1391,6 +1401,11 @@ struct ContentView: View {
                 RowText(title: "Renderer", detail: "DXMT: Direct3D 11 → Metal, with SkyrimMT's Skyrim fix.")
                 Text(launcher.crashFix == .applied ? "Metal (DXMT)" : "Needs setup")
                     .font(.body(13)).foregroundStyle(launcher.crashFix == .applied ? Color.skCream : Color.skGoldLight)
+            }
+            Divider().overlay(Color.white.opacity(0.06))
+            HStack {
+                RowText(title: "Screenshots", detail: "F12 in game (Steam). Kept inside this folder's Wine prefix.")
+                Button("Open") { launcher.openScreenshots() }.buttonStyle(SmallButtonStyle()).frame(width: 110)
             }
         }
         .onAppear { launcher.refreshSettings(); mods.refreshVersions() }

@@ -333,7 +333,7 @@ final class Launcher: ObservableObject {
             SetupCheck(id: "crashfix", title: "Skyrim fix for the Metal renderer", ok: crashFix == .applied,
                        fix: "Applied by “Run setup” (without it Skyrim quits after the logo)."),
             SetupCheck(id: "dxmt", title: "Metal renderer (DXMT \(Launcher.pinnedDXMT ?? "runtime"))", ok: dxmtCurrent,
-                       fix: "Click “Run setup” with Skyrim and Steam closed: updates DXMT (no more black shadows on 1.6.1170)."),
+                       fix: "Click “Run setup” with Skyrim and Steam closed: updates DXMT (no more black shadows following characters)."),
             SetupCheck(id: "steam", title: "Steam for Windows", ok: exists(Paths.steamExe),
                        fix: "Installed by “Run setup” (official Valve installer)."),
             SetupCheck(id: "login", title: "Logged in to Steam", ok: everLoggedIn,

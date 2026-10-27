@@ -1,6 +1,6 @@
 #!/bin/bash
 # The Metal renderer (DXMT) pinned in config/release.conf, newer than the runtime's v0.80: fixes the black shadows
-# that follow characters on Skyrim 1.6.1170 (issue #2) and the stray-Release crash itself (DXMT 66277b8), so the
+# that follow characters (issue #2) and the stray-Release crash itself (DXMT 66277b8), so the
 # binary patch (tools/wine-patches/dxmt_purevirtual_return.sh) isn't needed with it.
 #   scripts/dxmt.sh [status]   up-to-date | outdated <installed> | no-runtime
 #   scripts/dxmt.sh install    download (cache/), verify, install into the runtime and the prefix, record wine/.dxmt-build

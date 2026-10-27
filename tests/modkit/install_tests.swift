@@ -139,6 +139,13 @@ func installTests() {
     if case .gameRoot = l { check(true, "") } else { check(false, "DLL + Vortex instructions → game folder layout (\(l))") }
     let vm = try! f.kit.finishInstall(work: w, layout: l, name: "Engine Fixes - SKSE64 Preloader")
     check(snapshot(f.kit.stagingFolder(vm)).keys.sorted() == ["__root__/d3dx9_42.dll"], "DLL staged for the game folder, Vortex JSON left out")
+    // Community Shaders feature: a lone Shaders/ folder is Data content, not a wrapper to strip
+    write(src.appendingPathComponent("cs/Shaders/Features/TerrainVariation.ini"), "ini"); write(src.appendingPathComponent("cs/Shaders/TerrainVariation/TerrainVariation.hlsli"), "hlsl")
+    pack(src.appendingPathComponent("cs"), src.appendingPathComponent("cs.7z"), format: "7zip")
+    (w, l) = try! f.kit.beginInstall(archive: src.appendingPathComponent("cs.7z"))
+    let csm = try! f.kit.finishInstall(work: w, layout: l, name: "Terrain Variation")
+    check(snapshot(f.kit.stagingFolder(csm)).keys.sorted() == ["shaders/features/terrainvariation.ini", "shaders/terrainvariation/terrainvariation.hlsli"],
+          "Shaders/ kept under Data (\(snapshot(f.kit.stagingFolder(csm)).keys.sorted()))")
     // essentials detection
     let ess = essentials.first { $0.id == "skse" }!
     check(!f.kit.isInstalled(essentials.first { $0.id == "skyui" }!), "SkyUI not installed")

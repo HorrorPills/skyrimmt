@@ -24,7 +24,7 @@ public enum InstallError: Error, CustomStringConvertible {
 public enum Installer {
     /// Folder names that only appear at the top of Data/ (case-insensitive).
     static let dataFolders: Set<String> = ["meshes", "textures", "scripts", "interface", "skse", "sound", "music", "seq",
-        "strings", "lodsettings", "shadersfx", "grass", "dyndolod", "video", "materials", "calientetools", "netscriptframework",
+        "strings", "lodsettings", "shaders", "shadersfx", "grass", "dyndolod", "video", "materials", "calientetools", "netscriptframework",
         "skyproc patchers", "facegen", "tools", "nemesis_engine", "pandora_engine", "source", "terrain", "trees", "distantlod", "lsdata"]
     static let dataExtensions: Set<String> = ["esp", "esm", "esl", "bsa", "ba2", "ini", "modgroups", "txt"]
 

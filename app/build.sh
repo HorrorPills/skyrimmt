@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"; ROOT="$(cd .. && pwd)"
 OUT="$ROOT/build/app"; APP="$OUT/SkyrimMT.app"; RES="$APP/Contents/Resources"
-VERSION="${SKYRIMMT_VERSION:-$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo dev)}"
+VERSION="${SKYRIMMT_VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always 2>/dev/null || echo dev)}"
 case $VERSION in v[0-9]*) ;; *) VERSION="0.0.0-dev" ;; esac   # no tag yet: a dev build never looks newer than a release
 if [ "${1:-}" != --no-install ]; then
   pgrep -x SkyrimMT >/dev/null && { echo "quit SkyrimMT first"; exit 1; }

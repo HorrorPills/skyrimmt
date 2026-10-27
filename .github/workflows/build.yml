@@ -1,0 +1,37 @@
+# Every push: ModKit tests + a full app build from a clean clone (the zip is kept as an artifact).
+# A v* tag also opens a draft release with the zip; its notes are written and it is published by hand.
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest   # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # build.sh takes the version from the tag
+      - name: Toolchain
+        run: |
+          swiftc --version
+          brew install mingw-w64   # Mac Fixes SKSE plugin, controller probe, frame recorder
+      - name: ModKit tests
+        run: tests/modkit/run.sh
+      - name: Build
+        run: app/build.sh --no-install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkyrimMT-app
+          path: build/app/SkyrimMT-app.zip
+      - name: Draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" build/app/SkyrimMT-app.zip --draft --title "SkyrimMT ${GITHUB_REF_NAME#v}" --notes "Notes to come."

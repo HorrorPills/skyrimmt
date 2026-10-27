@@ -69,6 +69,17 @@ struct DownloadQueueView: View {
         }
     }
 
+    /// "12 MB of 40 MB · 3 MB/s · 9 s left" (its own function: inline, older Swift compilers time out type-checking it)
+    private func progressLine(_ j: DownloadJob, _ fmt: (Int64) -> String) -> String {
+        var s = fmt(j.received)
+        if let t = j.total { s += " of " + fmt(t) }
+        if j.speed > 0 {
+            s += " · \(fmt(Int64(j.speed)))/s"
+            if let t = j.total { s += " · \(Int(Double(t - j.received) / j.speed)) s left" }
+        }
+        return s
+    }
+
     private func row(_ j: DownloadJob) -> some View {
         let fmt = { (b: Int64) in ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
         return HStack(spacing: 10) {
@@ -84,9 +95,7 @@ struct DownloadQueueView: View {
                 Text(j.name).lineLimit(1)
                 if j.state == .running {
                     if let t = j.total, t > 0 { ProgressView(value: Double(j.received), total: Double(t)) }
-                    Text(fmt(j.received) + (j.total.map { " of " + fmt($0) } ?? "") + (j.speed > 0 ? " · \(fmt(Int64(j.speed)))/s" : "")
-                         + ((j.total.map { t in j.speed > 0 ? " · \(Int(Double(t - j.received) / j.speed)) s left" : "" }) ?? ""))
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(progressLine(j, fmt)).font(.caption).foregroundStyle(.secondary)
                 } else if case .failed(let e) = j.state {
                     Text(e).font(.caption).foregroundStyle(.red).lineLimit(2)
                 } else if j.state == .cancelled {

@@ -24,7 +24,7 @@ public enum InstallError: Error, CustomStringConvertible {
 public enum Installer {
     /// Folder names that only appear at the top of Data/ (case-insensitive).
     static let dataFolders: Set<String> = ["meshes", "textures", "scripts", "interface", "skse", "sound", "music", "seq",
-        "strings", "lodsettings", "shadersfx", "grass", "dyndolod", "video", "materials", "calientetools", "netscriptframework",
+        "strings", "lodsettings", "shaders", "shadersfx", "grass", "dyndolod", "video", "materials", "calientetools", "netscriptframework",
         "skyproc patchers", "facegen", "tools", "nemesis_engine", "pandora_engine", "source", "terrain", "trees", "distantlod", "lsdata"]
     static let dataExtensions: Set<String> = ["esp", "esm", "esl", "bsa", "ba2", "ini", "modgroups", "txt"]
 
@@ -109,10 +109,12 @@ public enum Installer {
             if let d = e.first(where: { $0.lowercased() == "data" }), isDir(root.appendingPathComponent(d)), e.count <= 3 {
                 return .data(root: root.appendingPathComponent(d))
             }
-            // only DLL/EXE (+ notes) at the top and no folders: files for the game folder (SSE Engine Fixes part 2)
+            // only DLL/EXE (+ notes) at the top and no folders: files for the game folder (SSE Engine Fixes part 2;
+            // from a Vortex collection it also carries Vortex's "install to the game folder" instructions)
             let bins = e.filter { ["dll", "exe"].contains(($0 as NSString).pathExtension.lowercased()) }
             if !bins.isEmpty && !e.contains(where: { isDir(root.appendingPathComponent($0)) })
-                && e.allSatisfy({ ["dll", "exe", "txt", "md", "toml", "ini"].contains(($0 as NSString).pathExtension.lowercased()) }) {
+                && e.allSatisfy({ ["dll", "exe", "txt", "md", "toml", "ini"].contains(($0 as NSString).pathExtension.lowercased())
+                                  || $0.lowercased() == "vortex_override_instructions.json" }) {
                 return .gameRoot(root: root)
             }
             if e.contains(where: { dataFolders.contains($0.lowercased()) || dataExtensions.contains(($0 as NSString).pathExtension.lowercased()) && $0.lowercased() != "readme.txt" }) {

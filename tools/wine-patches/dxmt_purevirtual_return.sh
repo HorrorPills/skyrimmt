@@ -11,6 +11,9 @@
 # Patch (verified against original bytes first):
 #   __cxa_pure_virtual+0x3d (file 0x1a2ad)  ud2 ; mov %rax,%rbx ; lea…   ->  add $0x40,%rsp ; pop %rbx ; xor %eax,%eax ; ret
 # Applied to the builtin (lib/wine/x86_64-windows) and the prefix's system32 copy.
+# DXMT fixed this itself after v0.80 (66277b8, 2026-09-16: "make pure virtual call non-fatal"): such a build reports
+# "upstream" and needs no patch — a release after v0.80, or a newer build SkyrimMT installed (its version is listed in
+# wine/.dxmt-build; a commit build's hash alone doesn't tell whether it includes the fix).
 # Usage: dxmt_purevirtual_return.sh apply|revert|status
 set -u
 SKYRIM_HOME="${SKYRIM_HOME:-$HOME/Games/skyrim}"
@@ -26,11 +29,23 @@ overall() {   # state of all files: original | patched | unknown | mixed
   local s first=""; for f in "${FILES[@]}"; do [ -f "$f" ] || { echo unknown; return; }; s=$(state "$f"); [ -z "$first" ] && first=$s; [ "$s" = "$first" ] || { echo mixed; return; }; done; echo "$first"
 }
 
+upstream() {   # the installed DXMT makes the stray Release non-fatal itself (version string after "DXMT D3D")
+  local v; v=$(/usr/bin/perl -0777 -ne 'print $1 if /DXMT D3D\0+([\x21-\x7e]{2,40})\0/' "${FILES[0]}" 2>/dev/null)
+  case $v in
+    v0.[0-9]*) [ "${v#v0.}" -gt 80 ] 2>/dev/null ;;
+    v[1-9]*)   true ;;
+    ?*)        grep -qxF "$v" "$SKYRIM_HOME/wine/.dxmt-build" 2>/dev/null ;;
+    *)         false ;;
+  esac
+}
+
 st=$(overall)
+[ "$st" = unknown ] && upstream && st=upstream
 case "${1:-status}" in
   status) echo "$st" ;;
   apply)
     [ "$st" = patched ] && { echo "already patched"; exit 0; }
+    [ "$st" = upstream ] && { echo "not needed: this DXMT build has the fix"; exit 0; }
     for f in "${FILES[@]}"; do s=$(state "$f"); [ "$s" = original ] || [ "$s" = patched ] || { echo "unexpected d3d11.dll contents in $f (different DXMT build?) — not patching"; exit 1; }; done
     [ -f "$BACKUP" ] || { mkdir -p "$(dirname "$BACKUP")"; cp -p "${FILES[0]}" "$BACKUP"; }
     for f in "${FILES[@]}"; do
@@ -41,6 +56,7 @@ case "${1:-status}" in
     done
     echo "patched (backup: $BACKUP)" ;;
   revert)
+    [ "$st" = upstream ] && { echo "this DXMT build isn't patched (it has the fix): nothing to revert"; exit 0; }
     [ -f "$BACKUP" ] || { echo "no backup at $BACKUP"; exit 1; }
     for f in "${FILES[@]}"; do cp "$BACKUP" "$f.new" && mv -f "$f.new" "$f"; done; echo "reverted to original" ;;
   *) echo "usage: $0 apply|revert|status"; exit 2 ;;

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SkyrimMT setup — idempotent: every step checks first and skips what is already done.
 #   scripts/setup.sh [--runtime <path-or-url to tf2mt-runtime-*.tar.xz>]
-# Steps: Rosetta → Wine runtime → mouse patch → prefix (Windows 10) → Steam (Windows) → INI defaults →
+# Steps: Rosetta → Wine runtime → DXMT → mouse patch → prefix (Windows 10) → Steam (Windows) → INI defaults →
 #        Steam login / Skyrim install (TODO for the user, done from the launcher).
 # Output lines starting with "==>" are step headers, "OK"/"SKIP"/"FAIL"/"TODO" are results, "DONE" ends a run
 # (parsed by the launcher).
@@ -68,6 +68,15 @@ else
   [ -x "$WINE" ] && ok "$how ($("$WINE" --version))" || fail "runtime installed but $WINE missing"
 fi
 
+step "Metal renderer (DXMT ${DXMT_VERSION:-from the runtime})"   # before the prefix: wineboot then copies it in
+case $("$SKYRIMMT_ROOT/scripts/dxmt.sh" status) in
+  up-to-date) skip "installed" ;;
+  outdated*)
+    if server_up; then todo "quit Skyrim and Steam, then run setup again (DXMT can't be replaced while Wine runs)"
+    else out=$("$SKYRIMMT_ROOT/scripts/dxmt.sh" install) && ok "$out" || fail "$out"; fi ;;
+  *) fail "no Wine runtime" ;;
+esac
+
 step "Smooth mouse fix (Wine patch)"
 st=$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$PATCH" status 2>&1)
 case $st in
@@ -77,13 +86,17 @@ case $st in
 esac
 
 step "Wine prefix ($WINEPREFIX)"
-win10() { grep -q '"ProductName"="Windows 10' "$WINEPREFIX/system.reg" 2>/dev/null; }
-if [ -f "$WINEPREFIX/system.reg" ] && win10; then skip "ready (Windows 10)"
+# wine.inf writes "Windows 10 Pro", winecfg /v win10 writes "Microsoft Windows 10"
+win10() { grep -qE '"ProductName"="(Microsoft )?Windows 10' "$WINEPREFIX/system.reg" 2>/dev/null; }
+# a wineboot cut short (session ended mid-setup) leaves the 32-bit side empty: Steam's installer then dies on kernel32
+complete() { [ -f "$WINEPREFIX/system.reg" ] && [ -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; }
+if complete && win10; then skip "ready (Windows 10)"
 else
-  if [ ! -f "$WINEPREFIX/system.reg" ]; then
+  if ! complete; then
+    rm -f "$WINEPREFIX/.update-timestamp"   # else wineboot -u sees an up-to-date prefix and installs nothing
     WINEDLLOVERRIDES="mscoree,mshtml=" "$WINE" wineboot -u >/dev/null 2>&1
     "$WINESERVER" -w
-    [ -f "$WINEPREFIX/system.reg" ] || fail "wineboot did not create the prefix"
+    complete || fail "wineboot did not create the prefix (delete $WINEPREFIX and run setup again)"
   fi
   win10 || { "$WINE" winecfg /v win10 >/dev/null 2>&1; "$WINESERVER" -w; }
   win10 && ok "created (Windows 10)" || fail "could not set Windows 10 mode"
@@ -115,6 +128,7 @@ DXMTP="$SKYRIMMT_ROOT/tools/wine-patches/dxmt_purevirtual_return.sh"
 st=$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$DXMTP" status 2>&1)
 case $st in
   patched)  skip "already applied" ;;
+  upstream) skip "not needed: this DXMT build has the fix" ;;
   original|mixed) SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$DXMTP" apply >/dev/null && ok "applied" || fail "DXMT patch failed" ;;
   *)        todo "unknown DXMT build — fix not applied (Skyrim may quit after the logo)" ;;
 esac

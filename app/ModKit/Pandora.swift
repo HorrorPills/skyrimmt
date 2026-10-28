@@ -35,6 +35,36 @@ extension ModKit {
         return name.hasPrefix("fnis_") && (name.hasSuffix("_list.txt") || name.hasSuffix("_behavior.hkx"))
     }
 
+    /// Patches Pandora should switch on, by code (the patch folder's name). Without Pandora_Engine/ActiveMods.json in its
+    /// output Pandora switches on every patch it finds — including the templates Nemesis ships for mods that may not be
+    /// installed (TUDM, TK Dodge, Momo…), whose behaviours then call missing animations: characters T-pose. A patch is
+    /// on only when a mod other than the engines (files outside Nemesis_Engine/mod, Pandora_Engine/mod) provides it.
+    func pandoraPatchSelection(_ profile: Profile) throws -> [(code: String, active: Bool)] {
+        let plan = try plan(profile)
+        var providers: [String: Set<String>] = [:]   // patch code → mods with files in its folder
+        var engines = Set<String>()
+        for (key, file) in plan.files {
+            for root in ["data/nemesis_engine/", "data/pandora_engine/"] where key.hasPrefix(root) {
+                let ids = [file.modID] + (plan.overridden[key] ?? [])
+                let parts = key.dropFirst(root.count).split(separator: "/")
+                if parts.count > 2, parts[0] == "mod" { providers[String(parts[1]), default: []].formUnion(ids) }
+                else { engines.formUnion(ids) }
+            }
+        }
+        return providers.keys.sorted().map { ($0, !providers[$0]!.subtracting(engines).isEmpty) }
+    }
+
+    /// Write the selection where Pandora reads it (Pandora_Engine/ActiveMods.json under its output folder).
+    func writePandoraSelection(_ profile: Profile, into out: URL) throws {
+        let entries = try pandoraPatchSelection(profile).enumerated().map { i, p in
+            ["code": p.code, "active": p.active, "priority": i + 1] as [String: Any]
+        }
+        let dir = out.appendingPathComponent("Pandora_Engine")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys])
+            .write(to: dir.appendingPathComponent("ActiveMods.json"))
+    }
+
     /// Fingerprint of the deployed Pandora inputs (Pandora's own output excluded) and of the Pandora build.
     public func pandoraInputs() throws -> (fingerprint: String, count: Int) {
         let build = (try? String(contentsOf: home.appendingPathComponent("tools/pandora/.skyrimmt-pandora"), encoding: .utf8)) ?? ""
@@ -75,6 +105,7 @@ extension ModKit {
         let out = home.appendingPathComponent("cache/pandora-run-\(Int(t0.timeIntervalSince1970))")
         try? fm.removeItem(at: out)
         try fm.createDirectory(at: out, withIntermediateDirectories: true)
+        try writePandoraSelection(without, into: out)   // also the starting choice in Pandora's own window
         let p = Process()
         p.executableURL = pandoraBinary
         p.currentDirectoryURL = pandoraBinary.deletingLastPathComponent()

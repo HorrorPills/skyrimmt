@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"; ROOT="$(cd .. && pwd)"
 OUT="$ROOT/build/app"; APP="$OUT/SkyrimMT.app"; RES="$APP/Contents/Resources"
-VERSION="${SKYRIMMT_VERSION:-$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo dev)}"
+VERSION="${SKYRIMMT_VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always 2>/dev/null || echo dev)}"
 case $VERSION in v[0-9]*) ;; *) VERSION="0.0.0-dev" ;; esac   # no tag yet: a dev build never looks newer than a release
 if [ "${1:-}" != --no-install ]; then
   pgrep -x SkyrimMT >/dev/null && { echo "quit SkyrimMT first"; exit 1; }
@@ -17,13 +17,16 @@ swift make_icon.swift "$OUT/SkyrimMT.iconset" "$OUT/icon-preview.png"
 iconutil -c icns "$OUT/SkyrimMT.iconset" -o "$RES/SkyrimMT.icns"
 # bundled SkyrimMT: only what the launcher runs (scripts, configs, wine patch tools, licence notes)
 cp -R "$ROOT/scripts" "$ROOT/config" "$RES/skyrimmt/"
-cp -R "$ROOT/tools/wine-patches" "$RES/skyrimmt/tools/"
+cp -R "$ROOT/tools/wine-patches" "$ROOT/tools/keizaal" "$RES/skyrimmt/tools/"
 cp "$ROOT/THIRD_PARTY.md" "$RES/skyrimmt/"
-# unattended benchmark (Mod Manager → Performance): the script + its keyboard/display helpers
-mkdir -p "$RES/skyrimmt/tools/bench" "$RES/skyrimmt/build/tools"
-cp "$ROOT/tools/bench/bench.sh" "$ROOT/tools/bench/analyze.py" "$ROOT/tools/bench/ini_merge.py" "$RES/skyrimmt/tools/bench/"
-swiftc -O "$ROOT/tools/bench/gamekeys.swift" -o "$RES/skyrimmt/build/tools/gamekeys"
-clang -O2 "$ROOT/tools/bench/displaystate.c" -framework CoreGraphics -framework IOKit -framework CoreFoundation -o "$RES/skyrimmt/build/tools/displaystate"
+# unattended benchmark (Mod Manager → Performance): the script + its keyboard/display helpers. Not in the public
+# repository: a clone builds without it (the Performance page then can't measure)
+if [ -d "$ROOT/tools/bench" ]; then
+  mkdir -p "$RES/skyrimmt/tools/bench" "$RES/skyrimmt/build/tools"
+  cp "$ROOT/tools/bench/bench.sh" "$ROOT/tools/bench/analyze.py" "$ROOT/tools/bench/ini_merge.py" "$RES/skyrimmt/tools/bench/"
+  swiftc -O "$ROOT/tools/bench/gamekeys.swift" -o "$RES/skyrimmt/build/tools/gamekeys"
+  clang -O2 "$ROOT/tools/bench/displaystate.c" -framework CoreGraphics -framework IOKit -framework CoreFoundation -o "$RES/skyrimmt/build/tools/displaystate"
+else echo "warning: tools/bench missing — Performance benchmark not bundled"; fi
 # frame-time recording proxy (Debug → Record frame times)
 if command -v x86_64-w64-mingw32-gcc >/dev/null || [ -x /opt/homebrew/bin/x86_64-w64-mingw32-gcc ]; then
   mkdir -p "$RES/skyrimmt/build/frametrace"
@@ -37,6 +40,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>SkyrimMT</string>
   <key>CFBundleDisplayName</key><string>SkyrimMT</string>
   <key>CFBundleIdentifier</key><string>local.skyrimmt.launcher</string>
+  <key>NSMicrophoneUsageDescription</key><string>Games running in SkyrimMT can use the microphone for voice chat (Keizaal Online, SkyMP).</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -48,6 +52,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>Nexus Mods download</string>
     <key>CFBundleURLSchemes</key><array><string>nxm</string></array>
+  </dict><dict>
+    <key>CFBundleURLName</key><string>Keizaal Online login</string>
+    <key>CFBundleURLSchemes</key><array><string>skyrim-rp</string></array>
   </dict></array>
 </dict></plist>
 PLIST
@@ -91,6 +98,7 @@ cat > "$SES/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>SkyrimMT Session</string>
   <key>CFBundleIdentifier</key><string>local.skyrimmt.session</string>
+  <key>NSMicrophoneUsageDescription</key><string>Games running in SkyrimMT can use the microphone for voice chat (Keizaal Online, SkyMP).</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>

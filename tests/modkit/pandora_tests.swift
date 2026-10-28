@@ -40,7 +40,8 @@ func pandoraTests() {
     let r = try! k.runPandora()
     let outID = ModKit.pandoraOutputID(try! k.currentProfile().name)
     let prof = try! k.currentProfile()
-    check(r.files == 1 && r.warnings == 1, "output counted, log parsed (\(r.files) files, \(r.warnings) warnings)")
+    // behaviour + the patch selection handed to Pandora (Pandora_Engine/ActiveMods.json, which Pandora keeps)
+    check(r.files == 2 && r.warnings == 1, "output counted, log parsed (\(r.files) files, \(r.warnings) warnings)")
     check(k.mod(outID) != nil && prof.mods.last?.id == outID && prof.mods.last?.enabled == true, "output mod enabled and last")
     check(fm.fileExists(atPath: f.game.appendingPathComponent("Data/meshes/actors/character/behaviors/0_master.hkx").path), "output deployed")
     check(!fm.fileExists(atPath: k.stagingFolder(k.mod(outID)!).appendingPathComponent("Pandora_Engine/PreviousOutput.txt").path), "run bookkeeping dropped")
@@ -78,4 +79,43 @@ func pandoraTests() {
     check(!fm.fileExists(atPath: f.game.appendingPathComponent("Data/meshes/actors/character/behaviors/0_master.hkx").path), "output gone from the game")
     check(!k.pandoraNeedsRun(), "nothing to do afterwards")
     try? fm.removeItem(at: f.home)
+
+    section("pandora patch selection")
+    let g = Fixture("pandora-selection")
+    let kg = g.kit
+    let received = g.home.appendingPathComponent("received-ActiveMods.json")
+    // keeps the selection SkyrimMT hands over (Pandora reads <-o>/Pandora_Engine/ActiveMods.json)
+    write(kg.pandoraBinary, """
+    #!/bin/bash
+    out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+    cp "$out/Pandora_Engine/ActiveMods.json" "\(received.path)"
+    mkdir -p "$out/meshes/actors/character/behaviors"; echo x > "$out/meshes/actors/character/behaviors/0_master.hkx"
+    """)
+    chmod(kg.pandoraBinary.path, 0o755)
+    // the Nemesis mod ships the engine and template patches for mods that may not be installed (as Nemesis does)
+    _ = g.addMod("Nemesis Unlimited Behavior Engine", ["Nemesis_Engine/behavior_templates/0_master.txt": "t",
+                                                       "Nemesis_Engine/mod/tudm/info.ini": "name=TUDM template",
+                                                       "Nemesis_Engine/mod/tkuc/info.ini": "name=TK template"])
+    _ = g.addMod("Some Animation", ["Nemesis_Engine/mod/anim/info.ini": "name=Anim", "meshes/actors/character/animations/anim/a.hkx": "a"])
+    _ = g.addMod("The Ultimate Dodge Mod", ["Nemesis_Engine/mod/tudm/info.ini": "name=TUDM", "meshes/actors/character/animations/tudm/d.hkx": "d"])
+    _ = try! kg.deploy()
+    _ = try! kg.runPandora()
+    let entries = (try? JSONSerialization.jsonObject(with: Data(contentsOf: received))) as? [[String: Any]] ?? []
+    let active = Dictionary(uniqueKeysWithValues: entries.compactMap { e in (e["code"] as? String).map { ($0, e["active"] as? Bool ?? false) } })
+    check(active.count == 3, "every patch listed (\(active.keys.sorted()))")
+    check(active["anim"] == true, "a patch shipped by an animation mod is on")
+    check(active["tudm"] == true, "an engine template also provided by its mod is on")
+    check(active["tkuc"] == false, "an engine-only template is off (its animations aren't installed)")
+
+    section("generators run automatically (per profile)")
+    let name = try! kg.currentProfile().name
+    let file = kg.profilesDir.appendingPathComponent("\(name)/profile.json")
+    // a profile.json written before the setting existed still decodes (a decode failure would rebuild the profile)
+    write(file, #"{"version":1,"items":{"name":"\#(name)","mods":[],"loadOrder":[],"separateSaves":false}}"#)
+    check(kg.profile(name) != nil && kg.autoPandora && kg.autoBodySlide, "old profile: decodes, both on")
+    try! kg.setAutoGenerate(name, pandora: false)
+    check(!kg.autoPandora && kg.autoBodySlide, "Pandora off, BodySlide untouched")
+    try! kg.setAutoGenerate(name, bodySlide: false)
+    check(kg.profile(name)?.autoPandora == false && kg.profile(name)?.autoBodySlide == false, "both saved in profile.json")
+    try? fm.removeItem(at: g.home)
 }

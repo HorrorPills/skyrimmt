@@ -1688,7 +1688,8 @@ struct SkyrimMTApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var mods = ModManagerModel()
     var body: some Scene {
-        WindowGroup("SkyrimMT") {
+        // The launcher is a singleton; Nexus URL events must not create extra launcher windows.
+        Window("SkyrimMT", id: "launcher") {
             ContentView(mods: mods).preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)

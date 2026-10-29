@@ -1,0 +1,92 @@
+name: Bug report
+description: Report a reproducible problem with SkyrimMT.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve SkyrimMT. Search existing issues before opening a new one.
+        Please remove passwords, API keys, personal information, and private paths from logs or screenshots.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected area
+      options:
+        - Setup / installation
+        - Launcher / starting Skyrim
+        - Graphics / controls
+        - Mod installation / FOMOD
+        - Nexus Mods / Collections / Wabbajack
+        - Plugins / LOOT / load order
+        - Profiles / saves / backups
+        - Tools / native helpers
+        - Updater / releases
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: SkyrimMT version
+      description: Release version or commit SHA, if known.
+      placeholder: "e.g. v1.2.3 or a commit SHA"
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: "e.g. macOS 15.5"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Mac model and chip
+      placeholder: "e.g. MacBook Air with M3"
+    validations:
+      required: true
+  - type: dropdown
+    id: skyrim-edition
+    attributes:
+      label: Skyrim edition
+      options:
+        - Special Edition
+        - Anniversary Edition
+        - Not applicable / unsure
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the steps from a known starting state.
+      placeholder: |
+        1. Open SkyrimMT...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead? Include error messages if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs, screenshots, and mod details
+      description: Include relevant logs, screenshots, mod names, or load-order details. Redact sensitive information.
+      placeholder: "Paste relevant excerpts or attach files here, if applicable."

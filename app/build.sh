@@ -19,6 +19,9 @@ iconutil -c icns "$OUT/SkyrimMT.iconset" -o "$RES/SkyrimMT.icns"
 cp -R "$ROOT/scripts" "$ROOT/config" "$RES/skyrimmt/"
 cp -R "$ROOT/tools/wine-patches" "$ROOT/tools/keizaal" "$RES/skyrimmt/tools/"
 cp "$ROOT/THIRD_PARTY.md" "$RES/skyrimmt/"
+# Localized app strings live beside the Swift sources so macOS can select the
+# matching catalogue from the user's preferred language without runtime glue.
+if [ -d "$ROOT/app/Resources" ]; then cp -R "$ROOT/app/Resources/." "$RES/"; fi
 # unattended benchmark (Mod Manager → Performance): the script + its keyboard/display helpers. Not in the public
 # repository: a clone builds without it (the Performance page then can't measure)
 if [ -d "$ROOT/tools/bench" ]; then

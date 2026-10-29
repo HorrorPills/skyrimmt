@@ -71,13 +71,13 @@ struct DownloadQueueView: View {
 
     /// "12 MB of 40 MB · 3 MB/s · 9 s left" (its own function: inline, older Swift compilers time out type-checking it)
     private func progressLine(_ j: DownloadJob, _ fmt: (Int64) -> String) -> String {
-        var s = fmt(j.received)
-        if let t = j.total { s += " of " + fmt(t) }
+        var parts = [fmt(j.received)]
+        if let t = j.total { parts = [localizedFormat("%@ of %@", fmt(j.received), fmt(t))] }
         if j.speed > 0 {
-            s += " · \(fmt(Int64(j.speed)))/s"
-            if let t = j.total { s += " · \(Int(Double(t - j.received) / j.speed)) s left" }
+            parts.append(localizedFormat("%@/s", fmt(Int64(j.speed))))
+            if let t = j.total { parts.append(localizedFormat("%ld s left", Int(Double(t - j.received) / j.speed))) }
         }
-        return s
+        return parts.joined(separator: " · ")
     }
 
     private func row(_ j: DownloadJob) -> some View {

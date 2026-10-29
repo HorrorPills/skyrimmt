@@ -73,7 +73,7 @@ struct ActivityView: View {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(e.ended == nil ? e.lastStep : e.title).lineLimit(2)
                                     if let r = e.result, r != e.title { Text(r).font(.caption).foregroundStyle(e.failed ? .red : .secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
-                                    Text(e.started.formatted(date: .omitted, time: .shortened) + (e.ended.map { let d = $0.timeIntervalSince(e.started); return d >= 1 ? " · \(Int(d.rounded())) s" : "" } ?? " · running"))
+                                    Text(e.started.formatted(date: .omitted, time: .shortened) + (e.ended.map { let d = $0.timeIntervalSince(e.started); return d >= 1 ? localizedFormat(" · %ld s", Int(d.rounded())) : "" } ?? localized(" · running")))
                                         .font(.caption2).foregroundStyle(.tertiary)
                                 }
                             }

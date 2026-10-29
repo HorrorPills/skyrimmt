@@ -21,19 +21,19 @@ extension ModManagerModel {
     var perfMinutes: Int { (perfSelected.count + 2) * 3 }
 
     func runPerf() {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
-        guard perfHasSave else { message = "The benchmark needs the save “\(ModKit.benchSaveName)” (see below)."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
+        guard perfHasSave else { message = localizedFormat("The benchmark needs the save “%@” (see below).", ModKit.benchSaveName); return }
         let chosen = perfCandidates.filter { perfSelected.contains($0.modID) }
         guard !chosen.isEmpty else { return }
         let a = NSAlert()
-        a.messageText = "Measure \(chosen.count) mod\(chosen.count == 1 ? "" : "s")? About \(perfMinutes) minutes."
-        a.informativeText = "Skyrim is started \(chosen.count + 2) times with “\(ModKit.benchSaveName)” and controlled by keyboard and mouse input. Do not use the Mac until it finishes, and keep the display awake. Your profile is restored afterwards."
-        a.addButton(withTitle: "Start"); a.addButton(withTitle: "Cancel")
+        a.messageText = localizedFormat(chosen.count == 1 ? "Measure %ld mod? About %ld minutes." : "Measure %ld mods? About %ld minutes.", chosen.count, perfMinutes)
+        a.informativeText = localizedFormat("Skyrim is started %ld times with “%@” and controlled by keyboard and mouse input. Do not use the Mac until it finishes, and keep the display awake. Your profile is restored afterwards.", chosen.count + 2, ModKit.benchSaveName)
+        a.addButton(withTitle: localized("Start")); a.addButton(withTitle: localized("Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let k = kit
         let out = URL(fileURLWithPath: Paths.game).appendingPathComponent("cache/perf")
         let bench = Paths.repo + "/tools/bench/bench.sh"
-        busy = "Measuring performance…"
+        busy = localized("Measuring performance…")
         Task.detached {
             // a profile with its own saves folder: the bench save is copied in for the test
             let saveDst = k.activeSavesFolder.appendingPathComponent(ModKit.benchSaveName + ".ess")
@@ -51,10 +51,10 @@ extension ModManagerModel {
                 }, progress: { text in Task { @MainActor in self.busy = text } })
                 await MainActor.run {
                     self.busy = nil; self.perfReportShown = report
-                    self.message = "Measurement complete." + (report.results.first.map { " Highest cost: \($0.candidate.name) (\(String(format: "%.1f", $0.costMs)) ms per frame)." } ?? "")
+                    self.message = localized("Measurement complete.") + (report.results.first.map { localizedFormat(" Highest cost: %@ (%.1f ms per frame).", $0.candidate.name, $0.costMs) } ?? "")
                     self.reload()
                 }
-            } catch { await MainActor.run { self.busy = nil; self.message = "Performance test stopped: \(error). Your profile was restored."; self.reload() } }
+            } catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Performance test stopped: %@. Your profile was restored.", "\(error)"); self.reload() } }
         }
     }
 }
@@ -69,7 +69,7 @@ struct PerfPage: View {
                 if let r = model.perfReportShown { reportView(r) }
                 Text("Mods to measure").font(.headline)
                 if !model.perfHasSave {
-                    Label("Requires a save named “\(ModKit.benchSaveName)” made outdoors without mods. Start a new game with mods disabled, go outside, open the console (~) and enter: save \(ModKit.benchSaveName)", systemImage: "info.circle")
+                    Label(localizedFormat("Requires a save named “%@” made outdoors without mods. Start a new game with mods disabled, go outside, open the console (~) and enter: save %@", ModKit.benchSaveName, ModKit.benchSaveName), systemImage: "info.circle")
                         .font(.callout).fixedSize(horizontal: false, vertical: true)
                 }
                 if model.perfCandidates.isEmpty {
@@ -81,12 +81,12 @@ struct PerfPage: View {
                         HStack {
                             Text(c.name)
                             Text(ByteCountFormatter.string(fromByteCount: c.assetBytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
-                            if !c.together.isEmpty { Text("+ \(c.together.count) dependent").font(.caption).foregroundStyle(.secondary) }
+                            if !c.together.isEmpty { Text(localizedFormat("+ %ld dependent", c.together.count)).font(.caption).foregroundStyle(.secondary) }
                         }
                     }
                 }
                 HStack {
-                    Button("Measure \(model.perfSelected.count) mod\(model.perfSelected.count == 1 ? "" : "s") (about \(model.perfMinutes) min)") { model.runPerf() }
+                    Button(localizedFormat(model.perfSelected.count == 1 ? "Measure %ld mod (about %ld min)" : "Measure %ld mods (about %ld min)", model.perfSelected.count, model.perfMinutes)) { model.runPerf() }
                         .disabled(model.busy != nil || model.perfSelected.isEmpty || !model.perfHasSave)
                     Spacer()
                 }
@@ -100,8 +100,8 @@ struct PerfPage: View {
 
     @ViewBuilder private func reportView(_ r: PerfReport) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Last measurement — \(r.profile), \(r.date.formatted(date: .abbreviated, time: .shortened))").font(.headline)
-            Text(String(format: "Whole setup: %.0f FPS (%.2f ms per frame) · noise ±%.2f ms", r.baseline.fps, r.baseline.meanMs, r.noiseMs))
+            Text(localizedFormat("Last measurement — %@, %@", r.profile, r.date.formatted(date: .abbreviated, time: .shortened))).font(.headline)
+            Text(localizedFormat("Whole setup: %.0f FPS (%.2f ms per frame) · noise ±%.2f ms", r.baseline.fps, r.baseline.meanMs, r.noiseMs))
                 .font(.callout).foregroundStyle(.secondary)
             let worst = max(r.results.map(\.costMs).max() ?? 1, 0.01)
             ForEach(r.results) { x in
@@ -112,8 +112,8 @@ struct PerfPage: View {
                             .frame(width: max(2, g.size.width * CGFloat(max(x.costMs, 0) / worst)))
                     }.frame(height: 10)
                     Text(x.costMs > r.noiseMs
-                         ? String(format: "%.2f ms · +%.0f FPS without", x.costMs, x.without.fps - r.baseline.fps)
-                         : "below noise")
+                         ? localizedFormat("%.2f ms · +%.0f FPS without", x.costMs, x.without.fps - r.baseline.fps)
+                         : localized("below noise"))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 170, alignment: .trailing)
                 }
             }

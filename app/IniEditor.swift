@@ -19,13 +19,14 @@ struct IniEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Game settings — \(state.profile)").font(.headline)
+                Text(localizedFormat("Game settings — %@", state.profile)).font(.headline)
                 Spacer()
                 Picker("", selection: $state.file) { ForEach(ModKit.gameININames, id: \.self) { Text($0).tag($0) } }
                     .pickerStyle(.segmented).frame(width: 380).onChange(of: state.file) { _ in load() }
             }
-            Text(state.file == "SkyrimCustom.ini" ? "Your own overrides — the safest place for changes (the game never rewrites it)."
-                 : state.file == "SkyrimPrefs.ini" ? "The game rewrites this on exit (graphics menu settings)." : "Base settings; mods' guides often ask for changes here.")
+            let description = state.file == "SkyrimCustom.ini" ? "Your own overrides — the safest place for changes (the game never rewrites it)."
+                : state.file == "SkyrimPrefs.ini" ? "The game rewrites this on exit (graphics menu settings)." : "Base settings; mods' guides often ask for changes here."
+            Text(localized(description))
                 .font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $state.text).font(.system(.callout, design: .monospaced)).frame(minHeight: 360)
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))

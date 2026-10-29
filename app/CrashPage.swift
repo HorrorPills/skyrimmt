@@ -29,7 +29,7 @@ extension ModManagerModel {
     // MARK: one-click crash fix (ModKit/CrashFix.swift)
 
     private func crashFixStep(_ what: String, _ body: @escaping (ModKit) throws -> String?) {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let k = kit
         busy = what
         Task.detached {
@@ -44,29 +44,29 @@ extension ModManagerModel {
     func modName(_ id: String) -> String { kit.mod(id)?.name ?? id }
 
     func startCrashFix(_ r: CrashReport) {
-        crashFixStep("Disabling the top suspect…") { k in
-            guard let id = try k.startCrashFix(r) else { return "No installed mod to test for this crash." }
-            return "\(k.mod(id)?.name ?? id) is disabled and saves are backed up. Play to where the crash happened, then quit."
+        crashFixStep(localized("Disabling the top suspect…")) { k in
+            guard let id = try k.startCrashFix(r) else { return localized("No installed mod to test for this crash.") }
+            return localizedFormat("%@ is disabled and saves are backed up. Play to where the crash happened, then quit.", k.mod(id)?.name ?? id)
         }
     }
     func nextCrashSuspect() {
-        crashFixStep("Testing the next suspect…") { k in
+        crashFixStep(localized("Testing the next suspect…")) { k in
             let before = k.crashFixTrial().map { $0.candidates[$0.index] }
-            guard let id = try k.nextCrashFixSuspect() else { return "No suspect caused the crash. All are re-enabled. Use Copy for help to ask for support." }
-            return "\(before.flatMap { k.mod($0)?.name } ?? "The last suspect") is re-enabled; \(k.mod(id)?.name ?? id) is disabled. Play again to test."
+            guard let id = try k.nextCrashFixSuspect() else { return localized("No suspect caused the crash. All are re-enabled. Use Copy for help to ask for support.") }
+            return localizedFormat("%@ is re-enabled; %@ is disabled. Play again to test.", before.flatMap { k.mod($0)?.name } ?? localized("The last suspect"), k.mod(id)?.name ?? id)
         }
     }
     func keepOffAndContinueCrashFix() {
-        crashFixStep("Testing the next suspect…") { k in
-            guard let id = try k.keepOffAndContinueCrashFix() else { return "No suspects left. Mods you kept disabled stay disabled." }
-            return "\(k.mod(id)?.name ?? id) is also disabled. Play again to test."
+        crashFixStep(localized("Testing the next suspect…")) { k in
+            guard let id = try k.keepOffAndContinueCrashFix() else { return localized("No suspects left. Mods you kept disabled stay disabled.") }
+            return localizedFormat("%@ is also disabled. Play again to test.", k.mod(id)?.name ?? id)
         }
     }
     func endCrashFix(keepOff: Bool) {
-        crashFixStep(keepOff ? "Saving…" : "Reverting…") { k in
+        crashFixStep(localized(keepOff ? "Saving…" : "Reverting…")) { k in
             let cur = k.crashFixTrial().map { $0.candidates[$0.index] }
             try k.endCrashFix(keepOff: keepOff)
-            return keepOff ? "\(cur.flatMap { k.mod($0)?.name } ?? "The mod") stays disabled. Check its Nexus page for an update." : "Crash test ended. All changes were reverted."
+            return keepOff ? localizedFormat("%@ stays disabled. Check its Nexus page for an update.", cur.flatMap { k.mod($0)?.name } ?? localized("The mod")) : localized("Crash test ended. All changes were reverted.")
         }
     }
 
@@ -115,21 +115,21 @@ struct CrashPage: View {
         let cur = model.modName(t.candidates[t.index])
         let left = t.candidates.count - t.index - 1
         VStack(alignment: .leading, spacing: 8) {
-            Label("Crash test \(t.index + 1) of \(t.candidates.count)", systemImage: "stethoscope").font(.headline)
+            Label(localizedFormat("Crash test %ld of %ld", t.index + 1, t.candidates.count), systemImage: "stethoscope").font(.headline)
             switch model.crashFixOutcome {
             case .waiting:
-                Text("Testing without **\(cur)**. Play to where the crash happened, then quit. The result is detected automatically.")
+                Text(localizedFormat("Testing without **%@**. Play to where the crash happened, then quit. The result is detected automatically.", cur))
                 HStack { Spacer(); Button("Stop test") { model.endCrashFix(keepOff: false) } }
             case .sameCrash:
-                Text("Same crash without **\(cur)**. It is not the cause.")
+                Text(localizedFormat("Same crash without **%@**. It is not the cause.", cur))
                 HStack {
                     Spacer()
                     Button("Stop test") { model.endCrashFix(keepOff: false) }
-                    Button(left > 0 ? "Test next: \(model.modName(t.candidates[t.index + 1]))" : "Re-enable (no suspects left)") { model.nextCrashSuspect() }
+                    Button(left > 0 ? localizedFormat("Test next: %@", model.modName(t.candidates[t.index + 1])) : localized("Re-enable (no suspects left)")) { model.nextCrashSuspect() }
                         .keyboardShortcut(.defaultAction)
                 }
             case .differentCrash(let u):
-                Text("Without **\(cur)** the game crashed differently. The original crash may be fixed, or a new problem occurred first.")
+                Text(localizedFormat("Without **%@** the game crashed differently. The original crash may be fixed, or a new problem occurred first.", cur))
                 HStack {
                     Button("View new crash") { model.selectCrash(u) }
                     Spacer()
@@ -138,14 +138,14 @@ struct CrashPage: View {
                     Button("Keep disabled") { model.endCrashFix(keepOff: true) }
                 }
             case .noCrash(let m):
-                Text("No crash in \(m) minutes without **\(cur)**. It is most likely the cause.")
+                Text(localizedFormat("No crash in %ld minutes without **%@**. It is most likely the cause.", m, cur))
                 HStack {
                     Spacer()
                     Button("Re-enable") { model.endCrashFix(keepOff: false) }
                     Button("Keep disabled") { model.endCrashFix(keepOff: true) }.keyboardShortcut(.defaultAction)
                 }
             case .tooShort(let m):
-                Text("\(m) minute\(m == 1 ? "" : "s") played without a crash. Play at least \(CrashFix.minimumMinutes) minutes in total to confirm.")
+                Text(localizedFormat(m == 1 ? "%ld minute played without a crash. Play at least %ld minutes in total to confirm." : "%ld minutes played without a crash. Play at least %ld minutes in total to confirm.", m, CrashFix.minimumMinutes))
                 HStack { Spacer(); Button("Stop test") { model.endCrashFix(keepOff: false) } }
             }
         }
@@ -158,14 +158,14 @@ struct CrashPage: View {
         if let r = model.crashReport {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Crash on \(ModManagerModel.crashTitle(r.url))").font(.title3.bold())
-                    Text("Skyrim \(r.gameVersion) · \(r.exception.replacingOccurrences(of: "EXCEPTION_", with: "").replacingOccurrences(of: "_", with: " ").lowercased())")
+                    Text(localizedFormat("Crash on %@", ModManagerModel.crashTitle(r.url))).font(.title3.bold())
+                    Text(localizedFormat("Skyrim %@ · %@", r.gameVersion, r.exception.replacingOccurrences(of: "EXCEPTION_", with: "").replacingOccurrences(of: "_", with: " ").lowercased()))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let p = r.profile, p != model.profile {
                     HStack {
                         Image(systemName: "person.2").foregroundStyle(.secondary)
-                        Text("This crash happened in profile “\(p)”.").font(.callout)
+                        Text(localizedFormat("This crash happened in profile “%@”.", p)).font(.callout)
                         Spacer()
                         Button("Switch to it") { model.switchProfile(p) }.disabled(model.busy != nil)
                     }.padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
@@ -180,7 +180,7 @@ struct CrashPage: View {
                         Image(systemName: "wand.and.stars").font(.title2).foregroundStyle(Color.accentColor)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Find the cause").font(.headline)
-                            Text("Turns off \(model.modName(top)) for a test session. If the same crash returns, it is re-enabled and the next suspect is tested. Saves are backed up first.")
+                            Text(localizedFormat("Turns off %@ for a test session. If the same crash returns, it is re-enabled and the next suspect is tested. Saves are backed up first.", model.modName(top)))
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
@@ -191,7 +191,7 @@ struct CrashPage: View {
                 Text(r.suspects.isEmpty ? "No mod stands out in this log." : "Most likely involved").font(.headline)
                 ForEach(Array(r.suspects.prefix(6).enumerated()), id: \.element.id) { i, s in suspectRow(s, top: i == 0, best: r.suspects[0].score) }
                 if !r.objects.isEmpty {
-                    Text("In use when it crashed: " + r.objects.prefix(6).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                    Text(localizedFormat("In use when it crashed: %@", r.objects.prefix(6).joined(separator: ", "))).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
                     Button("Open log") { NSWorkspace.shared.open(r.url) }
@@ -204,7 +204,7 @@ struct CrashPage: View {
                         t += "Most likely involved: \(r.suspects.prefix(3).map(\.modName).joined(separator: ", "))\n\n"
                         t += model.kit.modListMarkdown(gameVersion: gv)
                         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string)
-                        model.message = "Crash summary + mod list copied. Attach the log file itself too (Show in Finder)."
+                        model.message = localized("Crash summary + mod list copied. Attach the log file itself too (Show in Finder).")
                     }.help("Crash summary and your mod list, ready to paste into a help request")
                     Spacer()
                 }

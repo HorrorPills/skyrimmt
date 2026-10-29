@@ -11,7 +11,7 @@ extension ModManagerModel {
             do {
                 let r = try await c.searchMods(q, sort: sort, offset: offset, count: 30)
                 browseHits = more ? browseHits + r.hits : r.hits; browseTotal = r.total
-            } catch { message = "Nexus search: \(error)" }
+            } catch { message = localizedFormat("Nexus search: %@", "\(error)") }
             browseLoading = false
         }
     }
@@ -19,7 +19,7 @@ extension ModManagerModel {
     /// A mod already in the library (another profile has it): enable it in this profile, no download.
     func addFromLibrary(nexusID: Int) {
         let ids = kit.mods.filter { $0.nexus?.modID == nexusID }.map(\.id)
-        undoable("Add Mod") {
+        undoable(localized("Add Mod")) {
             guard var p = try? kit.currentProfile() else { return }
             for id in ids {
                 if let i = p.mods.firstIndex(where: { $0.id == id }) { p.mods[i].enabled = true }
@@ -30,19 +30,19 @@ extension ModManagerModel {
             }
             do { try kit.saveProfile(p) } catch { message = "\(error)" }
         }
-        message = "Added to “\(profile)” — Deploy to use it."
+        message = localizedFormat("Added to “%@” — Deploy to use it.", profile)
         reload()
     }
 
     /// Install from Nexus: a mod with several files (body + outfits, options, patches) asks which ones; the author's
     /// primary file is preselected. Premium downloads them; free accounts get each file's page (Nexus rule).
     func installFromNexus(modID: Int, name: String) {
-        guard nexusKeyStored else { section = .downloads; message = "Add your Nexus Mods API key first (Downloads)."; return }
+        guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first (Downloads)."); return }
         let c = client()
         Task {
             do {
                 let files = try await c.files(modID).filter { !["OLD_VERSION", "ARCHIVED", "DELETED", "REMOVED"].contains($0.category.uppercased()) }
-                guard !files.isEmpty else { message = "\(name) has no files to install."; return }
+                guard !files.isEmpty else { message = localizedFormat("%@ has no files to install.", name); return }
                 let primary = try await c.mainFile(modID: modID)
                 if files.count == 1 { downloadAndInstall(modID: modID, name: name, files: files, primary: primary?.fileID); return }
                 filePicker = FilePickerState(modID: modID, name: name, files: files, primary: primary?.fileID, selected: Set(primary.map { [$0.fileID] } ?? []))
@@ -54,7 +54,7 @@ extension ModManagerModel {
     func downloadAndInstall(modID: Int, name: String, files: [NexusFileInfo], primary: Int?) {
         guard nexusUser?.premium ?? false else {
             for f in files.prefix(5) { NSWorkspace.shared.open(URL(string: "https://www.nexusmods.com/\(nexusGame)/mods/\(modID)?tab=files&file_id=\(f.fileID)&nmm=1")!) }
-            message = "Click “Mod Manager Download” on the page that opened. SkyrimMT downloads and installs it."; return
+            message = localized("Click “Mod Manager Download” on the page that opened. SkyrimMT downloads and installs it."); return
         }
         let c = client(), folder = kit.home.appendingPathComponent("downloads")
         Task.detached {
@@ -89,7 +89,7 @@ struct FilePickerView: View {
     var body: some View {
         if let st = model.filePicker {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Install \(st.name)").font(.title3.bold())
+                Text(localizedFormat("Install %@", st.name)).font(.title3.bold())
                 Text("Choose the files to install. Each file becomes its own mod.").foregroundStyle(.secondary)
                 List {
                     ForEach(["MAIN", "UPDATE", "OPTIONAL", "MISCELLANEOUS"], id: \.self) { cat in
@@ -116,7 +116,7 @@ struct FilePickerView: View {
                 HStack {
                     Spacer()
                     Button("Cancel") { model.filePicker = nil }.keyboardShortcut(.cancelAction)
-                    Button("Install \(st.selected.count) file\(st.selected.count == 1 ? "" : "s")") {
+                    Button(localizedFormat(st.selected.count == 1 ? "Install %ld file" : "Install %ld files", st.selected.count)) {
                         let chosen = st.files.filter { st.selected.contains($0.fileID) }
                         model.filePicker = nil
                         model.downloadAndInstall(modID: st.modID, name: st.name, files: chosen, primary: st.primary)
@@ -138,13 +138,15 @@ struct BrowsePage: View {
             HStack(spacing: 8) {
                 TextField("Search Nexus Mods for Skyrim Special Edition", text: $model.browseQuery)
                     .textFieldStyle(.roundedBorder).onSubmit { model.searchNexus() }
-                Picker("", selection: $model.browseSort) { ForEach(NexusSort.allCases) { Text($0.rawValue).tag($0) } }
+                Picker("", selection: $model.browseSort) {
+                    ForEach(NexusSort.allCases) { Text(localized($0.rawValue)).tag($0) }
+                }
                     .labelsHidden().frame(width: 170).onChange(of: model.browseSort) { _ in model.searchNexus() }
                 Button("Search") { model.searchNexus() }.keyboardShortcut(.defaultAction)
             }
             .padding(10)
             if model.browseTotal > 0 {
-                Text("\(model.browseTotal.formatted()) mods").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
+                Text(localizedFormat("%@ mods", model.browseTotal.formatted())).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
             }
             List {
                 ForEach(model.browseHits) { h in row(h, installed: installed.contains(h.modID), inLibrary: library.contains(h.modID)) }

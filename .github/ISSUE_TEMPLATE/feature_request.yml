@@ -1,0 +1,56 @@
+name: Feature request
+description: Suggest an improvement to SkyrimMT.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the problem or workflow first, then describe your proposed solution.
+        Check existing issues for a similar request before submitting.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a similar suggestion.
+          required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Area of SkyrimMT
+      options:
+        - Setup / installation
+        - Launcher / graphics / controls
+        - Mod installation / FOMOD
+        - Nexus Mods / Collections / Wabbajack
+        - Plugins / LOOT / load order
+        - Profiles / saves / backups
+        - Tools / native helpers
+        - Interface / accessibility
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe how you would like SkyrimMT to behave.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Are there existing workflows or workarounds?
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, mockups, relevant mods, or compatibility considerations if useful.

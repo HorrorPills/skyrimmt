@@ -8,6 +8,17 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// Looks up a user-facing string in the active app language, falling back to
+/// the English source text. Keeping this small wrapper separate from views
+/// makes formatted messages localizable too, not only SwiftUI string literals.
+func localized(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "")
+}
+
+func localizedFormat(_ key: String, _ arguments: CVarArg...) -> String {
+    String(format: localized(key), locale: Locale.current, arguments: arguments)
+}
+
 // MARK: - paths & shell
 
 func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
@@ -273,7 +284,7 @@ final class Launcher: ObservableObject {
                 self.steamPIDs = pids; self.gamePIDs = games
                 if Date().timeIntervalSince(self.steamToggled) > 4 { self.steamWindow = shown }
                 self.steam = kv["steam"] == "1" ? (kv["online"] == "1" ? .online : .starting) : .stopped
-                if self.message == "Starting Steam…" && self.steam == .online { self.message = "Steam is online." }
+                if self.message == localized("Starting Steam…") && self.steam == .online { self.message = localized("Steam is online.") }
                 if self.gameRunning { self.launching = false }
             }
         }
@@ -365,7 +376,7 @@ final class Launcher: ObservableObject {
         audioMixRate = v
         try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
         try? (v + "\n").write(toFile: Paths.game + "/config/audio-mix-rate", atomically: true, encoding: .utf8)
-        message = "Audio mix rate applies at the next launch."
+        message = localized("Audio mix rate applies at the next launch.")
     }
 
     // MARK: one-click setup: runtime + Wine + Steam (setup.sh) → Steam sign-in → Skyrim install, continuing by itself
@@ -386,18 +397,18 @@ final class Launcher: ObservableObject {
         guard exists(Paths.steamExe) else { autoSetup = false; return }               // setup.sh stopped: its log says why
         if !everLoggedIn {
             if !autoLoginStarted { autoLoginStarted = true; loginSteam() }
-            message = "Sign in to Steam in the window that opened. Setup continues automatically."
+            message = localized("Sign in to Steam in the window that opened. Setup continues automatically.")
             return
         }
         if !skyrimInstalled {
-            guard steam == .online else { if !autoLoginStarted { autoLoginStarted = true; startSteam() }; message = "Starting Steam…"; return }
+            guard steam == .online else { if !autoLoginStarted { autoLoginStarted = true; startSteam() }; message = localized("Starting Steam…"); return }
             if !autoInstallStarted { autoInstallStarted = true; installSkyrim() }
-            message = "Confirm the install in Steam's window. Skyrim downloads in the background (about 16 GB)."
+            message = localized("Confirm the install in Steam's window. Skyrim downloads in the background (about 16 GB).")
             return
         }
         autoSetup = false
         refreshPatches(); refreshSettings()
-        message = "Setup complete. Install the essential mods next (Mods → Essentials)."
+        message = localized("Setup complete. Install the essential mods next (Mods → Essentials).")
         NotificationCenter.default.post(name: .openModManagerEssentials, object: nil)
     }
 
@@ -430,15 +441,15 @@ final class Launcher: ObservableObject {
     func runSetupInteractive() {
         if exists(Paths.wine) || runtimeURLConfigured { runSetup(); return }
         let panel = NSOpenPanel()
-        panel.message = "Choose the runtime (tf2mt-runtime-*.tar.xz) downloaded from the release page"
+        panel.message = localized("Choose the runtime (tf2mt-runtime-*.tar.xz) downloaded from the release page")
         panel.allowedContentTypes = [UTType(filenameExtension: "xz") ?? .data]
         if panel.runModal() == .OK, let url = panel.url { runSetup(runtimeFile: url.path) }
     }
 
     func loginSteam() {
-        guard !otherSteam else { message = "Close tf2mt's Steam first (same account)."; return }
+        guard !otherSteam else { message = localized("Close tf2mt's Steam first (same account)."); return }
         Session.ensureHelper()
-        message = "Opening Steam — sign in, then come back here."
+        message = localized("Opening Steam. Sign in, then come back here.")
         Task.detached { SessionRunner.runSync([Paths.script("steam.sh"), "--login"], env: scriptEnv(removing: ["MTL_HUD_ENABLED"])) }
     }
 
@@ -455,7 +466,7 @@ final class Launcher: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
-        panel.message = "Choose where SkyrimMT keeps Wine, Steam and Skyrim (needs ~25 GB, more with mods)"
+        panel.message = localized("Choose where SkyrimMT keeps Wine, Steam and Skyrim (needs ~25 GB, more with mods)")
         if panel.runModal() == .OK, let url = panel.url { switchGameFolder(to: url.path) }
     }
 
@@ -481,7 +492,7 @@ final class Launcher: ObservableObject {
     /// helper and the status polling all follow the folder they started with).
     func switchGameFolder(to path: String) {
         guard path != Paths.game else { return }
-        message = "Closing Skyrim and Steam…"
+        message = localized("Closing Skyrim and Steam…")
         let reopenMods = NSApp.windows.contains { $0.title == "SkyrimMT Mods" && $0.isVisible }
         Task.detached {
             _ = shell(["/bin/bash", Paths.script("session-end.sh"), "--force"])   // still the current folder's environment
@@ -505,16 +516,17 @@ final class Launcher: ObservableObject {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         if let exe = UTType(filenameExtension: "exe") { panel.allowedContentTypes = [exe] }
-        panel.message = "Choose a Windows program to run in Skyrim's Wine environment"
+        panel.message = localized("Choose a Windows program to run in Skyrim's Wine environment")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let name = url.lastPathComponent
-        message = "Starting \(name)…"
+        message = localizedFormat("Starting %@…", name)
         Session.ensureHelper()
         Task.detached {
             let r = SessionRunner.runSync([Paths.script("run-exe.sh"), url.path])
             await MainActor.run {
-                self.message = r.status == 0 ? "Started \(name) (output: logs/run-exe.log)"
-                                             : "Couldn't start \(name): " + r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.message = r.status == 0
+                    ? localizedFormat("Started %@ (output: logs/run-exe.log)", name)
+                    : localizedFormat("Couldn't start %@: %@", name, r.output.trimmingCharacters(in: .whitespacesAndNewlines))
             }
         }
     }
@@ -526,8 +538,8 @@ final class Launcher: ObservableObject {
             let r = shell(["/bin/bash", Paths.mousePatch, on ? "apply" : "revert"], env: scriptEnv())
             await MainActor.run {
                 self.message = r.status == 0
-                    ? (on ? "Mouse fix applied — takes effect on next launch." : "Mouse fix removed — takes effect on next launch.")
-                    : "Mouse fix: " + r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ? localized(on ? "Mouse fix applied — takes effect on next launch." : "Mouse fix removed — takes effect on next launch.")
+                    : localizedFormat("Mouse fix: %@", r.output.trimmingCharacters(in: .whitespacesAndNewlines))
                 self.refreshPatches()
             }
         }
@@ -538,7 +550,7 @@ final class Launcher: ObservableObject {
         Task.detached {
             let r = shell(["/bin/bash", Paths.script("settings.sh"), "gamepad", on ? "on" : "off"])
             await MainActor.run {
-                self.message = r.status == 0 ? "Saved — applies on next launch." : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.message = r.status == 0 ? localized("Saved — applies on next launch.") : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.refreshSettings()
             }
         }
@@ -550,8 +562,9 @@ final class Launcher: ObservableObject {
             let r = shell(["/bin/bash", Paths.script("settings.sh"), "pacing", p])
             await MainActor.run {
                 let out = r.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.message = r.status == 0 ? (self.gameRunning ? "Saved — restart Skyrim to apply." : "Saved — applies on next launch.")
-                                             : "Frame pacing: " + out
+                self.message = r.status == 0
+                    ? localized(self.gameRunning ? "Saved — restart Skyrim to apply." : "Saved — applies on next launch.")
+                    : localizedFormat("Frame pacing: %@", out)
                 self.refreshSettings()
             }
         }
@@ -559,11 +572,11 @@ final class Launcher: ObservableObject {
 
     func setPreset(_ p: String) {
         guard p != settings.preset, ["low", "medium", "high", "ultra"].contains(p) else { return }
-        guard !gameRunning else { message = "Quit Skyrim first — it rewrites its settings on exit."; return }
+        guard !gameRunning else { message = localized("Quit Skyrim first. It rewrites its settings on exit."); return }
         Task.detached {
             let r = shell(["/bin/bash", Paths.script("settings.sh"), "preset", p])
             await MainActor.run {
-                self.message = r.status == 0 ? "\(p.capitalized) settings applied." : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.message = r.status == 0 ? localizedFormat("%@ settings applied.", localized(p.capitalized)) : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.refreshSettings()
             }
         }
@@ -574,8 +587,8 @@ final class Launcher: ObservableObject {
     func play(hud: Bool, frameLog: Bool, skse: Bool, extraArgs: String) {
         guard !launching, !gameRunning else { return }
         refreshChecks()
-        guard readyToPlay else { message = "Setup incomplete — see the Setup tab."; return }
-        guard !otherSteam else { message = "tf2mt's Steam is running with the same account — close it first."; return }
+        guard readyToPlay else { message = localized("Setup incomplete — see the Setup tab."); return }
+        guard !otherSteam else { message = localized("tf2mt's Steam is running with the same account. Close it first."); return }
         launching = true
         let mk = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
         mk.recordLaunch()                 // crash analysis knows the profile
@@ -614,13 +627,13 @@ final class Launcher: ObservableObject {
     func playKeizaal() {
         guard !launching, !gameRunning else { return }
         refreshChecks()
-        guard readyToPlay else { message = "Setup incomplete — see the Setup tab."; return }
-        guard !otherSteam else { message = "tf2mt's Steam is running with the same account — close it first."; return }
+        guard readyToPlay else { message = localized("Setup incomplete — see the Setup tab."); return }
+        guard !otherSteam else { message = localized("tf2mt's Steam is running with the same account. Close it first."); return }
         launching = true; launchingKeizaal = true
         let mk = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
         mk.recordLaunch()
         mk.restoreDriftedBinaries()
-        do { try mk.writeVortexDeployment() } catch { message = "Couldn't list the deployed files for Keizaal: \(error)" }
+        do { try mk.writeVortexDeployment() } catch { message = localizedFormat("Couldn't list the deployed files for Keizaal: %@", "\(error)") }
         Session.ensureHelper()
         message = steam == .online ? "Opening Keizaal Online…" : "Starting Steam — waiting for login…"
         Task.detached {
@@ -641,12 +654,12 @@ final class Launcher: ObservableObject {
 
     func quitSkyrim() {
         for pid in gamePIDs { kill(pid, SIGTERM) }
-        message = "Skyrim closed."
+        message = localized("Skyrim closed.")
         refresh()
     }
 
     func closeOtherSteam() {
-        message = "Closing tf2mt's Steam…"
+        message = localized("Closing tf2mt's Steam…")
         Task.detached {
             let r = shell(["/bin/bash", Paths.script("close-other.sh")])
             await MainActor.run { self.message = r.output.trimmingCharacters(in: .whitespacesAndNewlines); self.refresh() }
@@ -654,10 +667,10 @@ final class Launcher: ObservableObject {
     }
 
     func startSteam() {
-        guard !otherSteam else { message = "Close tf2mt's Steam first (same account)."; return }
+        guard !otherSteam else { message = localized("Close tf2mt's Steam first (same account)."); return }
         Session.ensureHelper()
         if !everLoggedIn { loginSteam(); return }
-        message = "Starting Steam…"
+        message = localized("Starting Steam…")
         Task.detached { SessionRunner.runSync([Paths.script("steam.sh")], env: scriptEnv(removing: ["MTL_HUD_ENABLED"])) }
     }
 
@@ -681,7 +694,7 @@ final class Launcher: ObservableObject {
         let dirs = ((try? FileManager.default.contentsOfDirectory(atPath: users)) ?? [])
             .map { users + "/" + $0 + "/760/remote/489830/screenshots" }.filter(exists)
         let mtime = { (p: String) in (try? FileManager.default.attributesOfItem(atPath: p)[.modificationDate] as? Date) ?? .distantPast }
-        guard let dir = dirs.max(by: { mtime($0) < mtime($1) }) else { message = "No screenshots yet — press F12 in game."; return }
+        guard let dir = dirs.max(by: { mtime($0) < mtime($1) }) else { message = localized("No screenshots yet. Press F12 in the game."); return }
         NSWorkspace.shared.open(URL(fileURLWithPath: dir))
     }
 
@@ -855,11 +868,11 @@ final class Updater: ObservableObject {
         req.setValue("SkyrimMT-launcher/\(current)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: req) { data, resp, err in
             let result: Result<ReleaseInfo?, UpdateError> = {
-                if let err = err { return .failure(UpdateError(message: "Couldn't reach GitHub: \(err.localizedDescription)")) }
+                if let err = err { return .failure(UpdateError(message: localizedFormat("Couldn't reach GitHub: %@", err.localizedDescription))) }
                 if let h = resp as? HTTPURLResponse, h.statusCode == 404 { return .success(nil) }   // no release (or repo) yet
-                if let h = resp as? HTTPURLResponse, h.statusCode != 200 { return .failure(UpdateError(message: "GitHub answered HTTP \(h.statusCode).")) }
+                if let h = resp as? HTTPURLResponse, h.statusCode != 200 { return .failure(UpdateError(message: localizedFormat("GitHub answered HTTP %ld.", h.statusCode))) }
                 guard let data = data, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tag = j["tag_name"] as? String else { return .failure(UpdateError(message: "Unexpected reply from GitHub.")) }
+                      let tag = j["tag_name"] as? String else { return .failure(UpdateError(message: localized("Unexpected reply from GitHub."))) }
                 if (j["draft"] as? Bool) == true || (j["prerelease"] as? Bool) == true { return .success(nil) }
                 let assets = j["assets"] as? [[String: Any]] ?? []
                 guard let a = assets.first(where: { ($0["name"] as? String) == Updater.assetName }),
@@ -884,37 +897,37 @@ final class Updater: ObservableObject {
 
     func install(gameRunning: Bool) {
         guard case .available = state, let r = latest else { return }
-        if gameRunning { state = .failed("Quit Skyrim before updating."); return }
+        if gameRunning { state = .failed(localized("Quit Skyrim before updating.")); return }
         let dest = Bundle.main.bundlePath
         guard FileManager.default.isWritableFile(atPath: (dest as NSString).deletingLastPathComponent) else {
-            state = .failed("No permission to replace \(dest)."); return
+            state = .failed(localizedFormat("No permission to replace %@.", dest)); return
         }
         guard let digest = r.digest, digest.hasPrefix("sha256:") else {
-            state = .failed("Release has no checksum; download it from GitHub instead."); return
+            state = .failed(localized("Release has no checksum; download it from GitHub instead.")); return
         }
         state = .downloading
         URLSession.shared.downloadTask(with: r.zipURL) { tmp, resp, err in
             func fail(_ m: String) { DispatchQueue.main.async { self.state = .failed(m) } }
-            if let err = err { return fail("Download failed: \(err.localizedDescription)") }
-            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { return fail("Download failed: HTTP \(h.statusCode).") }
-            guard let tmp = tmp else { return fail("Download failed.") }
+            if let err = err { return fail(localizedFormat("Download failed: %@", err.localizedDescription)) }
+            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { return fail(localizedFormat("Download failed: HTTP %ld.", h.statusCode)) }
+            guard let tmp = tmp else { return fail(localized("Download failed.")) }
             let work = NSTemporaryDirectory() + "skyrimmt-update-\(UUID().uuidString)"
             let zip = work + "/" + Updater.assetName
             do {
                 try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true)
                 try FileManager.default.moveItem(atPath: tmp.path, toPath: zip)
-            } catch { return fail("Couldn't store the download: \(error.localizedDescription)") }
+            } catch { return fail(localizedFormat("Couldn't store the download: %@", error.localizedDescription)) }
             DispatchQueue.main.async { self.state = .installing }
             let sum = shell(["/usr/bin/shasum", "-a", "256", zip]).output.split(separator: " ").first.map(String.init) ?? ""
-            if "sha256:" + sum != digest { return fail("Checksum mismatch; the update was not installed.") }
-            if shell(["/usr/bin/ditto", "-x", "-k", zip, work + "/new"]).status != 0 { return fail("Couldn't unpack the update.") }
+            if "sha256:" + sum != digest { return fail(localized("Checksum mismatch; the update was not installed.")) }
+            if shell(["/usr/bin/ditto", "-x", "-k", zip, work + "/new"]).status != 0 { return fail(localized("Couldn't unpack the update.")) }
             let app = work + "/new/SkyrimMT.app"
             let info = NSDictionary(contentsOfFile: app + "/Contents/Info.plist")
             guard info?["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier,
                   let v = info?["CFBundleShortVersionString"] as? String, versionParts(v) == versionParts(r.tag) else {
-                return fail("The downloaded app doesn't look like SkyrimMT \(r.tag).")
+                return fail(localizedFormat("The downloaded app doesn't look like SkyrimMT %@.", r.tag))
             }
-            if shell(["/usr/bin/codesign", "--verify", "--deep", app]).status != 0 { return fail("The downloaded app's signature is broken.") }
+            if shell(["/usr/bin/codesign", "--verify", "--deep", app]).status != 0 { return fail(localized("The downloaded app's signature is broken.")) }
             shell(["/usr/bin/xattr", "-dr", "com.apple.quarantine", app])
             let helper = work + "/swap.sh"
             let script = """
@@ -927,8 +940,8 @@ final class Updater: ObservableObject {
             open "$DEST"
             rm -rf "\(work)"
             """
-            do { try script.write(toFile: helper, atomically: true, encoding: .utf8) } catch { return fail("Couldn't prepare the update.") }
-            if !spawnDetached(["/bin/bash", helper, dest, app]) { return fail("Couldn't start the update helper.") }
+            do { try script.write(toFile: helper, atomically: true, encoding: .utf8) } catch { return fail(localized("Couldn't prepare the update.")) }
+            if !spawnDetached(["/bin/bash", helper, dest, app]) { return fail(localized("Couldn't start the update helper.")) }
             DispatchQueue.main.async { NSApp.terminate(nil) }
         }.resume()
     }
@@ -962,7 +975,7 @@ struct Card<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !title.isEmpty {
-                Text(title.uppercased()).font(.title(14)).foregroundStyle(Color.skGoldLight).tracking(2)
+                Text(localized(title).uppercased()).font(.title(14)).foregroundStyle(Color.skGoldLight).tracking(2)
             }
             content
         }
@@ -978,8 +991,8 @@ struct RowText: View {
     let detail: String
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.body(14)).foregroundStyle(Color.skCream)
-            Text(detail).font(.system(size: 11)).foregroundStyle(Color.skCream.opacity(0.55))
+            Text(localized(title)).font(.body(14)).foregroundStyle(Color.skCream)
+            Text(localized(detail)).font(.system(size: 11)).foregroundStyle(Color.skCream.opacity(0.55))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1003,9 +1016,9 @@ struct StatusRow: View {
     var body: some View {
         HStack {
             Circle().fill(color).frame(width: 9, height: 9).shadow(color: color.opacity(0.8), radius: 4)
-            Text(label).font(.body(13)).foregroundStyle(Color.skCream.opacity(0.75))
+            Text(localized(label)).font(.body(13)).foregroundStyle(Color.skCream.opacity(0.75))
             Spacer()
-            Text(value).font(.body(13)).foregroundStyle(Color.skCream)
+            Text(localized(value)).font(.body(13)).foregroundStyle(Color.skCream)
         }
     }
 }
@@ -1065,7 +1078,7 @@ struct TabButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(title.uppercased()).font(.title(13)).tracking(1.6).lineLimit(1).fixedSize()
+            Text(localized(title).uppercased()).font(.title(13)).tracking(1.6).lineLimit(1).fixedSize()
                 .foregroundStyle(selected ? Color.skDark : Color.skCream.opacity(0.55))
                 .padding(.horizontal, 14).padding(.vertical, 7)
                 .background(selected ? Color.skGold : Color.clear, in: RoundedRectangle(cornerRadius: 7))
@@ -1183,7 +1196,9 @@ struct ContentView: View {
         case .available(let tag):
             HStack(spacing: 8) {
                 Button { updater.install(gameRunning: launcher.gameRunning) } label: {
-                    Label(launcher.gameRunning ? "Quit Skyrim to update to \(tag)" : "Update to \(tag)",
+                    Label(launcher.gameRunning
+                              ? localizedFormat("Quit Skyrim to update to %@", tag)
+                              : localizedFormat("Update to %@", tag),
                           systemImage: "arrow.down.circle.fill").lineLimit(1)
                 }
                 .buttonStyle(SmallButtonStyle(prominent: true))
@@ -1205,11 +1220,11 @@ struct ContentView: View {
 
     private var updateStatusText: String {
         switch updater.state {
-        case .idle: return "Installed: \(updater.current)"
+        case .idle: return localizedFormat("Installed: %@", updater.current)
         case .checking: return "Checking…"
-        case .upToDate: return "\(updater.current) is the latest version."
-        case .noReleases: return "No published release yet (installed: \(updater.current))."
-        case .available(let t): return "\(t) is available (installed: \(updater.current))."
+        case .upToDate: return localizedFormat("%@ is the latest version.", updater.current)
+        case .noReleases: return localizedFormat("No published release yet (installed: %@).", updater.current)
+        case .available(let t): return localizedFormat("%@ is available (installed: %@).", t, updater.current)
         case .downloading: return "Downloading…"
         case .installing: return "Installing…"
         case .failed(let m): return m
@@ -1229,9 +1244,11 @@ struct ContentView: View {
     }
 
     private var headerLine: String {
-        var s = "\(displayName)  ·  \(displayRefreshHz) Hz  ·  SkyrimMT \(updater.current)"
+        var s = localizedFormat("%@ · %ld Hz · SkyrimMT %@", displayName, displayRefreshHz, updater.current)
         if !launcher.settings.shortVersion.isEmpty {
-            s += "  ·  Skyrim \(launcher.settings.shortVersion)" + (launcher.settings.skse ? (launcher.settings.skseMismatch ? " (SKSE ⚠︎)" : " (SKSE ✓)") : "")
+            s += launcher.settings.skse
+                ? localizedFormat(" · Skyrim %@ (SKSE %@)", launcher.settings.shortVersion, launcher.settings.skseMismatch ? "⚠︎" : "✓")
+                : localizedFormat(" · Skyrim %@", launcher.settings.shortVersion)
         }
         return s
     }
@@ -1277,14 +1294,15 @@ struct ContentView: View {
 
     private var controllersDetail: String {
         if pads.pads.isEmpty {
-            if let p = pads.pairedOff.first { return "\(p) is paired but off — press its PS/Xbox/Home button to connect." }
-            return "No controller connected. Pair one in System Settings › Bluetooth or plug it in."
+            if let p = pads.pairedOff.first { return localizedFormat("%@ is paired but off. Press its PS, Xbox, or Home button to connect.", p) }
+            return localized("No controller connected. Pair one in System Settings › Bluetooth or plug it in.")
         }
-        guard let slots = pads.gameSlots else { return pads.checking ? "Checking what Skyrim sees…" : "Not checked yet." }
-        if let e = pads.probeError { return "Couldn't check: \(e)" }
-        if slots.isEmpty { return "macOS sees it, Skyrim doesn't yet — reconnect the controller, then Check." }
-        return "Skyrim sees \(slots.count == 1 ? "it" : "\(slots.count) controllers") (XInput slot \(slots.map(String.init).joined(separator: ", ")))."
-            + (launcher.settings.gamepad ? "" : " Turn on “Use in Skyrim”.")
+        guard let slots = pads.gameSlots else { return pads.checking ? localized("Checking what Skyrim sees…") : localized("Not checked yet.") }
+        if let e = pads.probeError { return localizedFormat("Couldn't check: %@", e) }
+        if slots.isEmpty { return localized("macOS sees it, Skyrim doesn't yet. Reconnect the controller, then check again.") }
+        let seen = slots.count == 1 ? localized("one controller") : localizedFormat("%ld controllers", slots.count)
+        let status = localizedFormat("Skyrim sees %@ (XInput slot %@).", seen, slots.map(String.init).joined(separator: ", "))
+        return status + (launcher.settings.gamepad ? "" : " " + localized("Turn on “Use in Skyrim”."))
     }
 
     private var controllersRow: some View {
@@ -1298,7 +1316,7 @@ struct ContentView: View {
                         Text([p.transport.isEmpty ? nil : p.transport,
                               p.battery.map { "\($0) %\(p.charging ? " ⚡︎" : "")" }].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 11)).foregroundStyle(Color.skCream.opacity(0.55))
-                        if let s = pads.gameSlots, !s.isEmpty { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.skGreen).help("Skyrim sees a controller") }
+                        if let s = pads.gameSlots, !s.isEmpty { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.skGreen).help(localized("Skyrim sees a controller")) }
                     }
                 }
             }
@@ -1306,7 +1324,7 @@ struct ContentView: View {
                 Toggle("Use in Skyrim", isOn: Binding(get: { launcher.settings.gamepad }, set: { launcher.setGamepad($0) }))
                     .toggleStyle(.switch).tint(.skGold).font(.body(12)).foregroundStyle(Color.skCream)
                     .disabled(launcher.gameRunning)
-                    .help("Skyrim's own controller switch (SkyrimPrefs.ini bGamepadEnable, also in Settings › Gameplay).")
+                    .help(localized("Skyrim's own controller switch (SkyrimPrefs.ini bGamepadEnable, also in Settings › Gameplay)."))
                 Button(pads.checking ? "Checking…" : "Check") { pads.refresh(probeAfter: 0) }
                     .buttonStyle(SmallButtonStyle()).frame(width: 100).disabled(pads.checking)
             }
@@ -1338,7 +1356,7 @@ struct ContentView: View {
                             : "Skyrim's physics breaks above 60 fps without SSE Display Tweaks (Mods tab).")
                 Picker("", selection: Binding(get: { launcher.settings.pacing }, set: { launcher.setPacing($0) })) {
                     Text("60 fps (Skyrim default)").tag("60")
-                    Text("Up to \(displayRefreshHz) fps").tag("unlocked")
+                    Text(localizedFormat("Up to %ld fps", displayRefreshHz)).tag("unlocked")
                         .disabled(!launcher.settings.displayTweaks)
                 }
                 .labelsHidden().frame(width: 230)
@@ -1349,7 +1367,7 @@ struct ContentView: View {
                 RowText(title: "Window size",
                         detail: "Borderless window. Applied at every launch, for every profile.")
                 Picker("", selection: Binding(get: { launcher.windowSize }, set: { launcher.setWindowSize($0) })) {
-                    Text("Fit screen (\(Int(screen.width))×\(Int(screen.height)))").tag("fit")
+                    Text(localizedFormat("Fit screen (%ld×%ld)", Int(screen.width), Int(screen.height))).tag("fit")
                     ForEach(["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"].filter { s in
                         let p = s.split(separator: "x").compactMap { Double($0) }
                         return p.count == 2 && p[0] <= screen.width && p[1] <= screen.height && !(p[0] == screen.width && p[1] == screen.height)
@@ -1382,7 +1400,7 @@ struct ContentView: View {
                     let missing = mods.versionsKnown.filter { !mods.versionsInstalled.contains($0) }
                     if !missing.isEmpty {
                         Divider()
-                        ForEach(missing, id: \.self) { Text("Download Skyrim \($0)…").tag("download:\($0)") }
+                        ForEach(missing, id: \.self) { Text(localizedFormat("Download Skyrim %@…", $0)).tag("download:\($0)") }
                     }
                 }
                 .labelsHidden().frame(width: 230)
@@ -1418,12 +1436,14 @@ struct ContentView: View {
                 Image(systemName: s.skse ? (s.skseMismatch ? "exclamationmark.triangle.fill" : "checkmark.circle.fill") : "circle.dashed")
                     .font(.system(size: 17)).foregroundStyle(s.skse ? (s.skseMismatch ? Color.skGoldLight : Color.skGreen) : Color.skCream.opacity(0.5))
                     .frame(width: 22)
-                RowText(title: s.skse ? (s.skseMismatch ? "SKSE is for Skyrim \(s.skseFor) — game is \(s.shortVersion)" : "SKSE \(s.skseFor.isEmpty ? "" : "for \(s.skseFor) ")installed")
-                                      : "SKSE not installed",
+                RowText(title: s.skse ? (s.skseMismatch
+                                          ? localizedFormat("SKSE is for Skyrim %@ — game is %@", s.skseFor, s.shortVersion)
+                                          : (s.skseFor.isEmpty ? localized("SKSE installed") : localizedFormat("SKSE for %@ installed", s.skseFor)))
+                                      : localized("SKSE not installed"),
                         detail: s.skseMismatch ? "SKSE mods only load on the game version they were built for."
                                                : "Script Extender: needed by SkyUI, Display Tweaks and most big mods.")
                 if s.skseMismatch, mods.versionsKnown.contains(s.skseFor) || mods.versionsInstalled.contains(s.skseFor) {
-                    Button(mods.versionsInstalled.contains(s.skseFor) ? "Use \(s.skseFor)" : "Get \(s.skseFor)") {
+                    Button(mods.versionsInstalled.contains(s.skseFor) ? localizedFormat("Use %@", s.skseFor) : localizedFormat("Get %@", s.skseFor)) {
                         if mods.versionsInstalled.contains(s.skseFor) { mods.selectVersion(s.skseFor) { launcher.refreshSettings() } }
                         else { mods.downloadVersion(s.skseFor) }
                     }
@@ -1444,9 +1464,11 @@ struct ContentView: View {
             }
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "list.bullet").font(.system(size: 15)).foregroundStyle(Color.skCream.opacity(0.6)).frame(width: 22)
-                RowText(title: "Profile: \(mods.profile)",
-                        detail: "\(mods.mods.filter(\.enabled).count) of \(mods.mods.count) mods enabled · \(s.pluginsActive) plugins active"
-                            + (mods.dirty ? " · changes not deployed" : ""))
+                let enabledMods = mods.mods.filter(\.enabled).count
+                RowText(title: localizedFormat("Profile: %@", mods.profile),
+                        detail: mods.dirty
+                            ? localizedFormat("%ld of %ld mods enabled · %ld plugins active · changes not deployed", enabledMods, mods.mods.count, s.pluginsActive)
+                            : localizedFormat("%ld of %ld mods enabled · %ld plugins active", enabledMods, mods.mods.count, s.pluginsActive))
                 Button("Open Mod Manager") { openWindow(id: "mods"); NSApp.activate(ignoringOtherApps: true) }
                     .buttonStyle(SmallButtonStyle(prominent: true)).frame(width: 150)
             }
@@ -1617,7 +1639,7 @@ struct VersionDownloadView: View {
         ZStack {
             Color.black.opacity(0.55).ignoresSafeArea()
             VStack(spacing: 14) {
-                Text("Getting Skyrim \(mods.versionDownloading ?? "")").font(.title(20)).foregroundStyle(Color.skCream)
+                Text(localizedFormat("Getting Skyrim %@", mods.versionDownloading ?? "")).font(.title(20)).foregroundStyle(Color.skCream)
                 Text(mods.versionStep).font(.body(13)).foregroundStyle(Color.skCream.opacity(0.8)).multilineTextAlignment(.center)
                 if !mods.qrLines.isEmpty {
                     QRView(lines: mods.qrLines).frame(width: 240, height: 240)
@@ -1685,9 +1707,16 @@ struct ModsCommands: Commands {
     var body: some Commands {
         CommandMenu("Mods") {
             ForEach(Array(model.sidebarOrder.prefix(9).enumerated()), id: \.offset) { i, s in
-                Button(s.rawValue) { go(s) }.keyboardShortcut(KeyEquivalent(Character(String(i + 1))))
+                Button { go(s) } label: {
+                    Text(localized(s.rawValue))
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(i + 1))))
             }
-            ForEach(Array(model.sidebarOrder.dropFirst(9)), id: \.self) { s in Button(s.rawValue) { go(s) } }
+            ForEach(Array(model.sidebarOrder.dropFirst(9)), id: \.self) { s in
+                Button { go(s) } label: {
+                    Text(localized(s.rawValue))
+                }
+            }
             Divider()
             Button("Install from Archive…") { go(nil); model.chooseArchives() }.keyboardShortcut("o")
             Button("Create Empty Mod…") { go(nil); model.createEmptyMod() }.keyboardShortcut("n", modifiers: [.command, .shift])

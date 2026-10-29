@@ -14,7 +14,7 @@ extension ModManagerModel {
     }
 
     func originName(_ id: String) -> String {
-        id == ModKit.vanillaOrigin ? "Skyrim (game files)" : kit.mod(id)?.name ?? id
+        id == ModKit.vanillaOrigin ? localized("Skyrim (game files)") : kit.mod(id)?.name ?? id
     }
 
     /// Files and folders whose path contains the search text (first 500).
@@ -82,7 +82,7 @@ struct DataPage: View {
             Text(showPath ? n.id : n.name).lineLimit(1).truncationMode(.middle).foregroundStyle(conflict ? .red : .primary)
             Spacer()
             if n.isFolder {
-                Text("\(n.mods.count) source\(n.mods.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Text(localizedFormat(n.mods.count == 1 ? "%ld source" : "%ld sources", n.mods.count)).font(.caption).foregroundStyle(.secondary)
             } else if let w = n.winner {
                 Text(model.originName(w)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -95,7 +95,8 @@ struct DataPage: View {
                 if let id = model.dataSelection, let n = model.dataNode(id) {
                     Text("Data/" + id).font(.headline).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     if n.isFolder {
-                        Text("\(n.files) file\(n.files == 1 ? "" : "s") · \(n.conflicts) provided by more than one mod").font(.callout).foregroundStyle(n.conflicts > 0 ? .red : .secondary)
+                        let key = n.files == 1 ? "%ld file · %ld provided by more than one mod" : "%ld files · %ld provided by more than one mod"
+                        Text(localizedFormat(key, n.files, n.conflicts)).font(.callout).foregroundStyle(n.conflicts > 0 ? .red : .secondary)
                         Text("Mods with files in this folder").font(.subheadline.bold())
                         ForEach(n.mods.sorted { $0.value > $1.value }, id: \.key) { m in
                             HStack {
@@ -116,7 +117,7 @@ struct DataPage: View {
                     Button("Show in Finder") {
                         let u = model.kit.gameDir.appendingPathComponent("Data").appendingPathComponent(id)
                         if FileManager.default.fileExists(atPath: u.path) { NSWorkspace.shared.activateFileViewerSelecting([u]) }
-                        else { model.message = "Not deployed yet. Deploy to place it in the game folder." }
+                        else { model.message = localized("Not deployed yet. Deploy to place it in the game folder.") }
                     }
                 } else {
                     Text("Select a file or folder to see which mods provide it.").foregroundStyle(.secondary)
@@ -130,6 +131,6 @@ struct DataPage: View {
         Button { model.modSearch = ""; model.modFilter = .all; model.section = .mods; model.selectedIDs = [id]; model.refreshDetail() } label: {
             Image(systemName: "arrow.right.circle")
         }
-        .buttonStyle(.plain).help("Show in the mod list").accessibilityLabel("Show in the mod list")
+        .buttonStyle(.plain).help(localized("Show in the mod list")).accessibilityLabel(localized("Show in the mod list"))
     }
 }

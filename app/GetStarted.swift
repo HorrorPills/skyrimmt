@@ -40,11 +40,11 @@ struct GetStartedView: View {
     private func card(_ icon: String, _ tint: Color, _ title: String, _ text: String, need: String, button: String, action: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: icon).font(.system(size: 28)).foregroundStyle(tint)
-            Text(title).font(.headline)
-            Text(text).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(localized(title)).font(.headline)
+            Text(localized(text)).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            Text(need).font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
-            Button(button, action: action).buttonStyle(.borderedProminent).tint(tint)
+            Text(localized(need)).font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            Button(localized(button), action: action).buttonStyle(.borderedProminent).tint(tint)
         }
         .padding(14).frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))

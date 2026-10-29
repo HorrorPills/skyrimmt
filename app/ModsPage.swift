@@ -81,7 +81,7 @@ extension ModManagerModel {
         let rows = visibleMods
         let ids = from.map { rows[$0].id }
         let before = to < rows.count ? rows[to].id : nil
-        undoable("Move \(ModManagerModel.plural(ids.count, "Mod"))") { run { try $0.moveMods(ids, before: before) } }
+        undoable(localizedFormat(ids.count == 1 ? "Move %ld mod" : "Move %ld mods", ids.count)) { run { try $0.moveMods(ids, before: before) } }
     }
 
     func setEnabled(_ ids: Set<String>, _ on: Bool) {
@@ -89,7 +89,7 @@ extension ModManagerModel {
         var all = Set(ids)
         if let p = try? kit.currentProfile() { for id in ids where kit.mod(id)?.isSeparator == true { all.formUnion(kit.groupMembers(of: id, in: p)) } }
         if !on, guardPlaythroughs(kit.pluginsLost(disabling: all), action: "Turn Off") == .cancelled { reload(); return }
-        undoable("\(on ? "Enable" : "Disable") \(ModManagerModel.plural(all.count, "Mod"))") {
+        undoable(localizedFormat(on ? (all.count == 1 ? "Enable %ld mod" : "Enable %ld mods") : (all.count == 1 ? "Disable %ld mod" : "Disable %ld mods"), all.count)) {
             guard var p = try? kit.currentProfile() else { return }
             for i in p.mods.indices where all.contains(p.mods[i].id) { p.mods[i].enabled = on }
             if on { ModManagerModel.addToProfile(&p, all.filter { id in !p.mods.contains { $0.id == id } }.sorted()) }
@@ -99,23 +99,23 @@ extension ModManagerModel {
     }
 
     func move(_ ids: Set<String>, before: String?) {
-        undoable("Move \(ModManagerModel.plural(ids.count, "Mod"))") { run { try $0.moveMods(self.mods.map(\.id).filter { ids.contains($0) }, before: before) } }
+        undoable(localizedFormat(ids.count == 1 ? "Move %ld mod" : "Move %ld mods", ids.count)) { run { try $0.moveMods(self.mods.map(\.id).filter { ids.contains($0) }, before: before) } }
     }
 
     func moveToTop(_ ids: Set<String>) { move(ids, before: mods.first { !ids.contains($0.id) }?.id) }
 
     func addSeparator(before: String?) {
-        guard let name = ask("New separator", "Name", "") else { return }
+        guard let name = ask(localized("New separator"), localized("Name"), "") else { return }
         run { try $0.addSeparator(name, before: before) }
     }
 
     func renameSelected(_ id: String) {
-        guard let m = kit.mod(id), let name = ask("Rename “\(m.name)”", "Name", m.name) else { return }
+        guard let m = kit.mod(id), let name = ask(localizedFormat("Rename “%@”", m.name), localized("Name"), m.name) else { return }
         run { try $0.renameMod(id, to: name) }
     }
 
     func editNotes(_ id: String) {
-        guard let m = kit.mod(id), let notes = ask("Notes for “\(m.name)”", "Notes", m.notes, multiline: true) else { return }
+        guard let m = kit.mod(id), let notes = ask(localizedFormat("Notes for “%@”", m.name), localized("Notes"), m.notes, multiline: true) else { return }
         run { try $0.setNotes(id, notes) }
     }
 
@@ -134,27 +134,27 @@ extension ModManagerModel {
     }
 
     func setTracked(_ modID: Int, _ on: Bool) {
-        guard nexusKeyStored else { message = "Add your Nexus Mods API key first (Downloads)."; return }
+        guard nexusKeyStored else { message = localized("Add your Nexus Mods API key first (Downloads)."); return }
         let c = client()
         Task {
             do { try await c.setTracked(modID: modID, on); if on { tracked.insert(modID) } else { tracked.remove(modID) } }
-            catch { message = "Nexus: \(error)" }
+            catch { message = localizedFormat("Nexus: %@", "\(error)") }
         }
     }
 
     func endorse(_ modID: Int, version: String) {
-        guard nexusKeyStored else { message = "Add your Nexus Mods API key first (Downloads)."; return }
+        guard nexusKeyStored else { message = localized("Add your Nexus Mods API key first (Downloads)."); return }
         let c = client()
         Task {
-            do { try await c.endorse(modID: modID, version: version); endorsed[modID] = "Endorsed"; message = "Endorsed — thank you, the author sees it." }
-            catch NexusError.http(let code, let msg) where code == 403 { message = "Nexus: \(msg.isEmpty ? "endorsing needs the mod downloaded with this account first" : msg)" }
-            catch { message = "Nexus: \(error)" }
+            do { try await c.endorse(modID: modID, version: version); endorsed[modID] = "Endorsed"; message = localized("Endorsed — thank you, the author sees it.") }
+            catch NexusError.http(let code, let msg) where code == 403 { message = localizedFormat("Nexus: %@", msg.isEmpty ? localized("endorsing needs the mod downloaded with this account first") : msg) }
+            catch { message = localizedFormat("Nexus: %@", "\(error)") }
         }
     }
 
     func editCategory(_ ids: Set<String>) {
         let current = mods.first { ids.contains($0.id) }?.category ?? ""
-        guard let c = ask(ids.count == 1 ? "Category" : "Category for \(ids.count) mods", "Category (empty = none)", current) else { return }
+        guard let c = ask(ids.count == 1 ? localized("Category") : localizedFormat("Category for %ld mods", ids.count), localized("Category (empty = none)"), current) else { return }
         let t = c.trimmingCharacters(in: .whitespacesAndNewlines)
         run { $0.setCategory(Array(ids), t.isEmpty ? nil : t) }
     }
@@ -177,7 +177,9 @@ extension ModManagerModel {
         let risk = guardPlaythroughs(kit.pluginsLost(disabling: ids), action: "Remove")
         if risk == .cancelled { return }
         if risk == .noRisk {
-            let a = NSAlert(); a.messageText = names.count == 1 ? "Remove “\(names[0])”?" : "Remove \(names.count) mods?"
+            let a = NSAlert(); a.messageText = names.count == 1
+                ? localizedFormat("Remove “%@”?", names[0])
+                : localizedFormat("Remove %ld mods?", names.count)
             a.informativeText = (names.count > 1 ? names.prefix(8).joined(separator: ", ") + (names.count > 8 ? "…" : "") + "\n\n" : "")
                 + "Their files are removed from SkyrimMT (the downloaded archives stay). Deploy afterwards to take them out of the game. The profile's history keeps the old list."
             a.addButton(withTitle: "Remove"); a.addButton(withTitle: "Cancel")
@@ -243,11 +245,13 @@ struct ModsPage: View {
                 }
                 .labelsHidden().frame(width: 150).help("Show one Nexus category")
             }
-            Picker("", selection: $model.modFilter) { ForEach(ModFilter.allCases) { Text($0.rawValue).tag($0) } }
+            Picker("", selection: $model.modFilter) {
+                ForEach(ModFilter.allCases) { Text(localized($0.rawValue)).tag($0) }
+            }
                 .labelsHidden().frame(width: 150).help("Show only some mods")
             let free = model.updatableByHand
             if !free.isEmpty {
-                Button { model.updateMods(free) } label: { Label("Update all (\(free.count))", systemImage: "arrow.up.circle") }
+                Button { model.updateMods(free) } label: { Label(localizedFormat("Update all (%ld)", free.count), systemImage: "arrow.up.circle") }
                     .disabled(model.busy != nil)
                     .help("Updates all mods you installed yourself, keeping their position and installer choices. Collection mods stay at their pinned versions.")
             }
@@ -313,11 +317,13 @@ struct ModsPage: View {
                 Text(r.name).lineLimit(1).truncationMode(.middle).foregroundStyle(r.enabled ? .primary : .secondary)
                 if !r.notes.isEmpty { Image(systemName: "note.text").font(.caption).foregroundStyle(.secondary).help(r.notes) }
                 if let u = model.updates[r.id] {
-                    Button { model.updateMods([r.id]) } label: { Image(systemName: "arrow.up.circle.fill").foregroundStyle(r.collection.isEmpty ? .green : .secondary) }.accessibilityLabel("Update \(r.name)")
+                    Button { model.updateMods([r.id]) } label: { Image(systemName: "arrow.up.circle.fill").foregroundStyle(r.collection.isEmpty ? .green : .secondary) }.accessibilityLabel(localizedFormat("Update %@", r.name))
                         .buttonStyle(.plain)
-                        .help((r.collection.isEmpty ? "Update available: " : "Newer on Nexus (\(r.collection) pins this version): ") + ModManagerModel.versionText(u) + ". Click to update in place.")
+                        .help(r.collection.isEmpty
+                            ? localizedFormat("Update available: %@. Click to update in place.", ModManagerModel.versionText(u))
+                            : localizedFormat("Newer on Nexus (%@ pins this version): %@. Click to update in place.", r.collection, ModManagerModel.versionText(u)))
                 }
-                if r.plugins > 0 { Text("\(r.plugins)P").font(.caption2.weight(.semibold)).foregroundStyle(.secondary).help("\(r.plugins) plugin\(r.plugins == 1 ? "" : "s")") }
+                if r.plugins > 0 { Text("\(r.plugins)P").font(.caption2.weight(.semibold)).foregroundStyle(.secondary).help(localizedFormat(r.plugins == 1 ? "%ld plugin" : "%ld plugins", r.plugins)) }
                 if !r.inProfile { Text("not in this profile").font(.caption2).foregroundStyle(.tertiary).help("Installed for another profile. Enable it to add it here.") }
             }
             .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
@@ -326,8 +332,8 @@ struct ModsPage: View {
                 Text(r.category).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).frame(width: 92, alignment: .leading).help(r.category)
             }
             HStack(spacing: 3) {
-                if r.enabled && r.wins > 0 { Text("+\(r.wins)").foregroundStyle(.green).help("Overrides \(r.wins) files of mods above it") }
-                if r.enabled && r.loses > 0 { Text("−\(r.loses)").foregroundStyle(.orange).help("\(r.loses) files overridden by mods below it") }
+                if r.enabled && r.wins > 0 { Text("+\(r.wins)").foregroundStyle(.green).help(localizedFormat("Overrides %ld files of mods above it", r.wins)) }
+                if r.enabled && r.loses > 0 { Text("−\(r.loses)").foregroundStyle(.orange).help(localizedFormat("%ld files overridden by mods below it", r.loses)) }
             }
             .font(.caption.monospacedDigit()).frame(width: 64, alignment: .trailing)
             Text("\(r.files)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
@@ -345,7 +351,7 @@ struct ModsPage: View {
             Toggle("", isOn: Binding(get: { g.all > 0 && g.enabled == g.all }, set: { model.setEnabled([r.id], $0) }))
                 .labelsHidden().toggleStyle(.checkbox).help("Enable or disable the whole group")
             Text(r.name).font(.headline)
-            Text("\(g.enabled) of \(g.all)").font(.caption).foregroundStyle(.secondary)
+            Text(localizedFormat("%ld of %ld", g.enabled, g.all)).font(.caption).foregroundStyle(.secondary)
             Spacer()
         }
         .padding(.vertical, 2)
@@ -361,14 +367,14 @@ struct ModsPage: View {
             Button(r.separator ? "Rename separator…" : "Rename…") { model.renameSelected(r.id) }
             if !r.separator { Button("Notes…") { model.editNotes(r.id) } }
         }
-        if !r.separator { Button(ids.count > 1 ? "Set category for \(ids.count) mods…" : "Category…") { model.editCategory(ids) } }
+        if !r.separator { Button(ids.count > 1 ? localizedFormat("Set category for %ld mods…", ids.count) : "Category…") { model.editCategory(ids) } }
         Menu("Move to") {
             Button("Top (lowest priority)") { model.moveToTop(ids) }
             Button("Bottom (wins conflicts)") { model.move(ids, before: nil) }
             let seps = model.mods.filter { $0.separator && !ids.contains($0.id) }
             if !seps.isEmpty {
                 Divider()
-                ForEach(seps) { s in Button("Group “\(s.name)”") { model.move(ids, before: model.mods.drop { $0.id != s.id }.dropFirst().first { $0.separator }?.id) } }
+                ForEach(seps) { s in Button(localizedFormat("Group “%@”", s.name)) { model.move(ids, before: model.mods.drop { $0.id != s.id }.dropFirst().first { $0.separator }?.id) } }
             }
         }
         Menu("Colour") {
@@ -382,7 +388,7 @@ struct ModsPage: View {
         Divider()
         let ups = model.mods.map(\.id).filter { ids.contains($0) && model.updates[$0] != nil }   // list order
         if !ups.isEmpty {
-            Button(ups.count == 1 ? "Update to \(model.updates[ups[0]]!.newVersion)" : "Update \(ups.count) mods") { model.updateMods(ups) }
+            Button(ups.count == 1 ? localizedFormat("Update %@", model.updates[ups[0]]!.newVersion) : localizedFormat("Update %ld mods", ups.count)) { model.updateMods(ups) }
             Divider()
         }
         if !r.separator && ids.count == 1 {
@@ -392,7 +398,7 @@ struct ModsPage: View {
             Button("Show files in Finder") { model.openFolder(r.id) }
             if let n = r.nexusID { Button("Open on Nexus Mods") { model.openNexus(n) } }
         }
-        Button(ids.count > 1 ? "Remove \(ids.count) mods…" : (r.separator ? "Remove separator" : "Remove…")) { model.removeSelected(ids) }
+        Button(ids.count > 1 ? localizedFormat("Remove %ld mods…", ids.count) : (r.separator ? "Remove separator" : "Remove…")) { model.removeSelected(ids) }
     }
 
     @ViewBuilder private var detail: some View {
@@ -414,11 +420,11 @@ struct BulkPanel: View {
     var body: some View {
         let ids = model.selectedIDs
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(ids.count) mods selected").font(.title3.bold())
+            Text(localizedFormat("%ld mods selected", ids.count)).font(.title3.bold())
             HStack { Button("Enable") { model.setEnabled(ids, true) }; Button("Disable") { model.setEnabled(ids, false) } }
             HStack { Button("Move to top") { model.moveToTop(ids) }; Button("Move to bottom") { model.move(ids, before: nil) } }
             Button("Set category…") { model.editCategory(ids) }
-            Button("Remove \(ids.count) mods…", role: .destructive) { model.removeSelected(ids) }
+            Button(localizedFormat("Remove %ld mods…", ids.count), role: .destructive) { model.removeSelected(ids) }
             Spacer()
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -432,15 +438,15 @@ struct ModDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(row.name).font(.title3.bold()).lineLimit(2)
-            Text("Priority \(row.priority + 1) of \(model.mods.count) — lower in the list wins conflicts."
-                 + (row.version.isEmpty ? "" : " Version \(row.version).") + (row.collection.isEmpty ? "" : " From \(row.collection)."))
+            Text(localizedFormat("Priority %ld of %ld — lower in the list wins conflicts.", row.priority + 1, model.mods.count)
+                 + (row.version.isEmpty ? "" : localizedFormat(" Version %@.", row.version)) + (row.collection.isEmpty ? "" : localizedFormat(" From %@.", row.collection)))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let u = model.updates[row.id] {
                 HStack {
                     Image(systemName: "arrow.up.circle.fill").foregroundStyle(.green)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(u.newVersion == u.currentVersion || u.newVersion.isEmpty ? "A newer file is available" : "Version \(u.newVersion) is available").font(.callout)
-                        if !row.collection.isEmpty { Text("\(row.collection) pins this version — updating can break the collection.").font(.caption).foregroundStyle(.secondary) }
+                        Text(u.newVersion == u.currentVersion || u.newVersion.isEmpty ? localized("A newer file is available") : localizedFormat("Version %@ is available", u.newVersion)).font(.callout)
+                        if !row.collection.isEmpty { Text(localizedFormat("%@ pins this version — updating can break the collection.", row.collection)).font(.caption).foregroundStyle(.secondary) }
                     }
                     Spacer()
                     Button("Update") { model.updateMods([row.id]) }.disabled(model.busy != nil)
@@ -468,21 +474,21 @@ struct ModDetail: View {
         return List {
             if c.wins.isEmpty && c.loses.isEmpty { Text("No conflicts with other enabled mods.").foregroundStyle(.secondary) }
             if !c.wins.isEmpty {
-                Section("Wins \(c.wins.count) files") {
+                Section(localizedFormat("Wins %ld files", c.wins.count)) {
                     ForEach(c.wins) { f in
                         VStack(alignment: .leading, spacing: 1) {
                             Text(f.rel).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
-                            Text("over " + f.losers.map(name).joined(separator: ", ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            Text(localizedFormat("over %@", f.losers.map(name).joined(separator: ", "))).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                 }
             }
             if !c.loses.isEmpty {
-                Section("Loses \(c.loses.count) files") {
+                Section(localizedFormat("Loses %ld files", c.loses.count)) {
                     ForEach(c.loses) { f in
                         VStack(alignment: .leading, spacing: 1) {
                             Text(f.rel).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
-                            Text("to " + name(f.winner)).font(.caption2).foregroundStyle(.orange).lineLimit(1)
+                            Text(localizedFormat("to %@", name(f.winner))).font(.caption2).foregroundStyle(.orange).lineLimit(1)
                         }
                     }
                 }

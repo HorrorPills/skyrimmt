@@ -29,7 +29,7 @@ extension ModManagerModel {
 
     /// Put a profile state back: profile file, plugins.txt (load order) when it is the active one; deploy stays a click.
     func applyProfileState(_ p: Profile) {
-        guard p.name == profile else { message = "That change belongs to profile “\(p.name)” — switch to it to undo."; return }
+        guard p.name == profile else { message = localizedFormat("That change belongs to profile “%@” — switch to it to undo.", p.name); return }
         do {
             let current = try kit.currentProfile()
             try kit.saveProfile(p)

@@ -45,71 +45,71 @@ extension ModManagerModel {
         var out: [HealthItem] = []
         let missing = requirementIssues.filter { $0.state == .missing && !$0.requirement.conditional }
         for r in requirementIssues where !r.requirement.conditional {
-            let by = r.requiredBy.prefix(3).joined(separator: ", ") + (r.requiredBy.count > 3 ? " and \(r.requiredBy.count - 3) more" : "")
+            let by = r.requiredBy.prefix(3).joined(separator: ", ") + (r.requiredBy.count > 3 ? localizedFormat(" and %ld more", r.requiredBy.count - 3) : "")
             switch r.state {
             case .missing:
                 out.append(HealthItem(id: r.id, severity: r.requirement.conditional ? .warning : .problem,
-                                      title: "\(r.requirement.name) is missing",
-                                      detail: "Needed by \(by)." + (r.requirement.notes.isEmpty ? "" : " Author's note: “\(r.requirement.notes)”"),
-                                      fix: "Install", action: { self.installRequirements([r]) }))
+                                      title: localizedFormat("%@ is missing", r.requirement.name),
+                                      detail: localizedFormat("Needed by %@.", by) + (r.requirement.notes.isEmpty ? "" : localizedFormat(" Author's note: “%@”", r.requirement.notes)),
+                                      fix: localized("Install"), action: { self.installRequirements([r]) }))
             case .disabled(let id):
                 out.append(HealthItem(id: r.id, severity: r.requirement.conditional ? .warning : .problem,
-                                      title: "\(r.requirement.name) is installed but disabled",
-                                      detail: "Needed by \(by).", fix: "Enable", action: { self.setEnabled([id], true); self.checkHealth() }))
+                                      title: localizedFormat("%@ is installed but disabled", r.requirement.name),
+                                      detail: localizedFormat("Needed by %@.", by), fix: localized("Enable"), action: { self.setEnabled([id], true); self.checkHealth() }))
             }
         }
         if missing.count > 1 {
-            out.insert(HealthItem(id: "all-missing", severity: .problem, title: "\(missing.count) required mods are missing",
+            out.insert(HealthItem(id: "all-missing", severity: .problem, title: localizedFormat("%ld required mods are missing", missing.count),
                                   detail: missing.map(\.requirement.name).prefix(6).joined(separator: ", ") + (missing.count > 6 ? "…" : ""),
-                                  fix: "Install all", action: { self.installRequirements(missing) }), at: 0)
+                                  fix: localized("Install all"), action: { self.installRequirements(missing) }), at: 0)
         }
         for m in masterIssues {
-            out.append(HealthItem(id: "master:" + m.master, severity: .problem, title: "\(m.master) is missing",
-                                  detail: "Plugins that need it: \(m.neededBy.prefix(3).joined(separator: ", ")). The game crashes on start while they are active.",
-                                  fix: "Search Nexus", action: {
+            out.append(HealthItem(id: "master:" + m.master, severity: .problem, title: localizedFormat("%@ is missing", m.master),
+                                  detail: localizedFormat("Plugins that need it: %@. The game crashes on start while they are active.", m.neededBy.prefix(3).joined(separator: ", ")),
+                                  fix: localized("Search Nexus"), action: {
                                       let q = m.master.replacingOccurrences(of: ".esp", with: "").replacingOccurrences(of: ".esm", with: "").replacingOccurrences(of: ".esl", with: "")
                                       NSWorkspace.shared.open(URL(string: "https://www.nexusmods.com/skyrimspecialedition/search/?gsearch=\(q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q)")!)
                                   }))
         }
         if loadOrderIssueCount > 0 {
-            out.append(HealthItem(id: "lo", severity: .warning, title: "\(loadOrderIssueCount) load-order problem\(loadOrderIssueCount == 1 ? "" : "s")",
-                                  detail: "Plugins that load before their masters or need an inactive master.", fix: "Sort with LOOT",
+            out.append(HealthItem(id: "lo", severity: .warning, title: localizedFormat(loadOrderIssueCount == 1 ? "%ld load-order problem" : "%ld load-order problems", loadOrderIssueCount),
+                                  detail: localized("Plugins that load before their masters or need an inactive master."), fix: localized("Sort with LOOT"),
                                   action: { self.section = .plugins; self.lootSort() }))
         }
-        if healthStale.bodySlide { out.append(HealthItem(id: "bs", severity: .warning, title: "Bodies and outfits need rebuilding", detail: "Body or outfit mods changed since the last BodySlide build.", fix: "Build now", action: { self.runBodySlide() })) }
-        if healthStale.pandora { out.append(HealthItem(id: "pd", severity: .warning, title: "Animations need regenerating", detail: "Animation mods changed since Pandora last ran.", fix: "Generate", action: { self.runPandora() })) }
+        if healthStale.bodySlide { out.append(HealthItem(id: "bs", severity: .warning, title: localized("Bodies and outfits need rebuilding"), detail: localized("Body or outfit mods changed since the last BodySlide build."), fix: localized("Build now"), action: { self.runBodySlide() })) }
+        if healthStale.pandora { out.append(HealthItem(id: "pd", severity: .warning, title: localized("Animations need regenerating"), detail: localized("Animation mods changed since Pandora last ran."), fix: localized("Generate"), action: { self.runPandora() })) }
         for c in colInstalled { if let l = colLatest[c.slug] {
-            out.append(HealthItem(id: "col:" + c.slug, severity: .info, title: "\(c.name) has a new revision (\(l.revision))",
-                                  detail: "What changes: \(kit.collectionDiff(slug: c.slug, latest: l).summary). Your own additions to its profile stay.",
-                                  fix: "Update", action: { self.section = .collections; self.updateCollection(c) }))
+            out.append(HealthItem(id: "col:" + c.slug, severity: .info, title: localizedFormat("%@ has a new revision (%@)", c.name, l.revision),
+                                  detail: localizedFormat("What changes: %@. Your own additions to its profile stay.", kit.collectionDiff(slug: c.slug, latest: l).summary),
+                                  fix: localized("Update"), action: { self.section = .collections; self.updateCollection(c) }))
         } }
         for (i, g) in kit.wabbajackUpdates(gallery: wjGallery.isEmpty ? (kit.cachedGallery() ?? []) : wjGallery) {
-            out.append(HealthItem(id: "wj:" + i.machineURL, severity: .info, title: "\(i.title) \(g.version) is out (you have \(i.version))",
-                                  detail: "Updating reuses everything already downloaded and keeps the mods you added to “\(i.profile)”.",
-                                  fix: "Update", action: { self.section = .wabbajack; self.installWabbajack(g) }))
+            out.append(HealthItem(id: "wj:" + i.machineURL, severity: .info, title: localizedFormat("%@ %@ is out (you have %@)", i.title, g.version, i.version),
+                                  detail: localizedFormat("Updating reuses everything already downloaded and keeps the mods you added to “%@”.", i.profile),
+                                  fix: localized("Update"), action: { self.section = .wabbajack; self.installWabbajack(g) }))
         }
         let dups = kit.duplicateMods().filter { !$0.unused.isEmpty }
         if !dups.isEmpty {
             let n = dups.reduce(0) { $0 + $1.unused.count }
-            out.append(HealthItem(id: "dups", severity: .info, title: "\(n) unused duplicate mod\(n == 1 ? "" : "s")",
-                                  detail: dups.prefix(4).map(\.name).joined(separator: ", ") + (dups.count > 4 ? "…" : "") + ". Extra copies are not used by any profile.",
-                                  fix: "Remove extra copies", action: { self.run { k in for d in dups { for id in d.unused { try k.removeMod(id) } } }; self.checkHealth() }))
+            out.append(HealthItem(id: "dups", severity: .info, title: localizedFormat(n == 1 ? "%ld unused duplicate mod" : "%ld unused duplicate mods", n),
+                                  detail: dups.prefix(4).map(\.name).joined(separator: ", ") + (dups.count > 4 ? "…" : "") + localized(". Extra copies are not used by any profile."),
+                                  fix: localized("Remove extra copies"), action: { self.run { k in for d in dups { for id in d.unused { try k.removeMod(id) } } }; self.checkHealth() }))
         }
         let shared = kit.duplicateMods().filter { $0.unused.isEmpty }
         if !shared.isEmpty {
-            out.append(HealthItem(id: "dups-shared", severity: .info, title: "\(shared.count) mod\(shared.count == 1 ? " is" : "s are") installed in several profiles",
-                                  detail: shared.prefix(3).map(\.name).joined(separator: ", ") + (shared.count > 3 ? "…" : "") + ". Identical copies can be shared to save space.",
-                                  fix: "Share identical copies", action: { self.mergeDuplicates() }))
+            out.append(HealthItem(id: "dups-shared", severity: .info, title: localizedFormat(shared.count == 1 ? "%ld mod is installed in several profiles" : "%ld mods are installed in several profiles", shared.count),
+                                  detail: shared.prefix(3).map(\.name).joined(separator: ", ") + (shared.count > 3 ? "…" : "") + localized(". Identical copies can be shared to save space."),
+                                  fix: localized("Share identical copies"), action: { self.mergeDuplicates() }))
         }
         if let pre = skseNeeds, pre.pluginDLLs > 0 {
             if !pre.hasSKSE {
-                out.append(HealthItem(id: "no-skse", severity: .problem, title: "\(pre.pluginDLLs) mods need the Script Extender (SKSE), which isn't installed",
-                                      detail: "These mods do not load without SKSE.",
-                                      fix: "Show Essentials", action: { self.section = .essentials }))
+                out.append(HealthItem(id: "no-skse", severity: .problem, title: localizedFormat("%ld mods need the Script Extender (SKSE), which isn't installed", pre.pluginDLLs),
+                                      detail: localized("These mods do not load without SKSE."),
+                                      fix: localized("Show Essentials"), action: { self.section = .essentials }))
             } else if !pre.hasAddressLibrary {
-                out.append(HealthItem(id: "no-addrlib", severity: .warning, title: "Address Library for SKSE Plugins is missing",
-                                      detail: "Most of the profile's \(pre.pluginDLLs) SKSE plugins require it.",
-                                      fix: "Show Essentials", action: { self.section = .essentials }))
+                out.append(HealthItem(id: "no-addrlib", severity: .warning, title: localized("Address Library for SKSE Plugins is missing"),
+                                      detail: localizedFormat("Most of the profile's %ld SKSE plugins require it.", pre.pluginDLLs),
+                                      fix: localized("Show Essentials"), action: { self.section = .essentials }))
             }
         }
         // Steam updated the game but SKSE is for the old version: mods that need SKSE won't load
@@ -117,39 +117,39 @@ extension ModManagerModel {
             let game = kit.gameVersionKey == "steam" ? versionSteam : kit.gameVersionKey
             if !game.isEmpty, game != skse {
                 let canPin = versionsKnown.contains(skse)
-                out.append(HealthItem(id: "skse-mismatch", severity: .problem, title: "SKSE is for Skyrim \(skse), but the game is \(game)",
+                out.append(HealthItem(id: "skse-mismatch", severity: .problem, title: localizedFormat("SKSE is for Skyrim %@, but the game is %@", skse, game),
                                       detail: kit.gameVersionKey == "steam"
-                                        ? "Steam updated Skyrim. SKSE mods will not load until SKSE matches. " + (canPin ? "This profile can run on Skyrim \(skse) instead (a separate copy Steam does not update)." : "Install SKSE for \(game) when available.")
-                                        : "Reinstall the SKSE build for \(game).",
-                                      fix: canPin ? "Use Skyrim \(skse)" : "SKSE on Nexus",
+                                        ? localized("Steam updated Skyrim. SKSE mods will not load until SKSE matches. ") + (canPin ? localizedFormat("This profile can run on Skyrim %@ instead (a separate copy Steam does not update).", skse) : localizedFormat("Install SKSE for %@ when available.", game))
+                                        : localizedFormat("Reinstall the SKSE build for %@.", game),
+                                      fix: canPin ? localizedFormat("Use Skyrim %@", skse) : localized("SKSE on Nexus"),
                                       action: canPin ? { self.selectVersion(skse) } : { NSWorkspace.shared.open(URL(string: "https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files")!) }))
             }
         }
         if let c = unseenCrash {
-            out.append(HealthItem(id: "crash", severity: .warning, title: "The game crashed (\(ModManagerModel.crashTitle(c)))",
-                                  detail: crashReport?.url == c ? crashReport!.summary + (crashReport!.suspects.first.map { " Most likely involved: \($0.modName)." } ?? "") : "Crash Logger wrote a log.",
-                                  fix: "Explain", action: { self.section = .crashes }))
+            out.append(HealthItem(id: "crash", severity: .warning, title: localizedFormat("The game crashed (%@)", ModManagerModel.crashTitle(c)),
+                                  detail: crashReport?.url == c ? crashReport!.summary + (crashReport!.suspects.first.map { localizedFormat(" Most likely involved: %@.", $0.modName) } ?? "") : localized("Crash Logger wrote a log."),
+                                  fix: localized("Explain"), action: { self.section = .crashes }))
         }
         let cleanable = dirtyPlugins.filter(\.value.autoCleanable).keys.sorted()
         if !cleanable.isEmpty {
             let itm = cleanable.reduce(0) { $0 + (dirtyPlugins[$1]?.itm ?? 0) }, udr = cleanable.reduce(0) { $0 + (dirtyPlugins[$1]?.udr ?? 0) }
-            out.append(HealthItem(id: "clean", severity: .info, title: "\(cleanable.count) plugin\(cleanable.count == 1 ? "" : "s") can be cleaned",
-                                  detail: "\(itm) identical-to-master records and \(udr) deleted references in " + cleanable.prefix(4).joined(separator: ", ")
-                                    + (cleanable.count > 4 ? "…" : "") + ". Cleaned copies are stored separately; originals are not changed.",
-                                  fix: "Clean", action: { self.cleanPlugins(cleanable) }))
+            out.append(HealthItem(id: "clean", severity: .info, title: localizedFormat(cleanable.count == 1 ? "%ld plugin can be cleaned" : "%ld plugins can be cleaned", cleanable.count),
+                                  detail: localizedFormat("%ld identical-to-master records and %ld deleted references in ", itm, udr) + cleanable.prefix(4).joined(separator: ", ")
+                                    + (cleanable.count > 4 ? "…" : "") + localized(". Cleaned copies are stored separately; originals are not changed."),
+                                  fix: localized("Clean"), action: { self.cleanPlugins(cleanable) }))
         }
         let staleLight = kit.staleLightFlagged()
         if !staleLight.isEmpty {
-            out.append(HealthItem(id: "stale-light", severity: .warning, title: "\(staleLight.count) light-flagged cop\(staleLight.count == 1 ? "y is" : "ies are") out of date",
-                                  detail: staleLight.joined(separator: ", ") + " changed since they were flagged. The old copies would override the new versions.",
-                                  fix: "Remove old copies", action: { try? self.kit.removeLightFlagged(staleLight); self.reload(); self.checkHealth() }))
+            out.append(HealthItem(id: "stale-light", severity: .warning, title: localizedFormat(staleLight.count == 1 ? "%ld light-flagged copy is out of date" : "%ld light-flagged copies are out of date", staleLight.count),
+                                  detail: staleLight.joined(separator: ", ") + localized(" changed since they were flagged. The old copies would override the new versions."),
+                                  fix: localized("Remove old copies"), action: { try? self.kit.removeLightFlagged(staleLight); self.reload(); self.checkHealth() }))
         }
         if !staleCleaned.isEmpty {
-            out.append(HealthItem(id: "stale-clean", severity: .warning, title: "\(staleCleaned.count) cleaned plugin\(staleCleaned.count == 1 ? " is" : "s are") out of date",
-                                  detail: staleCleaned.joined(separator: ", ") + " changed since cleaning (a mod or game update) — the old cleaned copy would hide the new version.",
-                                  fix: "Remove old copies", action: { self.removeStaleCleaned(self.staleCleaned) }))
+            out.append(HealthItem(id: "stale-clean", severity: .warning, title: localizedFormat(staleCleaned.count == 1 ? "%ld cleaned plugin is out of date" : "%ld cleaned plugins are out of date", staleCleaned.count),
+                                  detail: staleCleaned.joined(separator: ", ") + localized(" changed since cleaning (a mod or game update). The old cleaned copy would hide the new version."),
+                                  fix: localized("Remove old copies"), action: { self.removeStaleCleaned(self.staleCleaned) }))
         }
-        if dirty { out.append(HealthItem(id: "deploy", severity: .info, title: "Changes not deployed yet", detail: "The game still has the previous set of mods.", fix: "Deploy", action: { self.deploy() })) }
+        if dirty { out.append(HealthItem(id: "deploy", severity: .info, title: localized("Changes not deployed yet"), detail: localized("The game still has the previous set of mods."), fix: localized("Deploy"), action: { self.deploy() })) }
         return out.sorted { $0.severity.rawValue < $1.severity.rawValue }
     }
 
@@ -158,29 +158,29 @@ extension ModManagerModel {
         requirementIssues.filter(\.requirement.conditional).map { r in
             let by = r.requiredBy.prefix(2).joined(separator: ", ")
             if case .disabled(let id) = r.state {
-                return HealthItem(id: r.id, severity: .info, title: "\(r.requirement.name) (installed, disabled)", detail: "Suggested by \(by): “\(r.requirement.notes)”",
-                                  fix: "Enable", action: { self.setEnabled([id], true); self.checkHealth() })
+                return HealthItem(id: r.id, severity: .info, title: localizedFormat("%@ (installed, disabled)", r.requirement.name), detail: localizedFormat("Suggested by %@: “%@”", by, r.requirement.notes),
+                                  fix: localized("Enable"), action: { self.setEnabled([id], true); self.checkHealth() })
             }
-            return HealthItem(id: r.id, severity: .info, title: r.requirement.name, detail: "Suggested by \(by): “\(r.requirement.notes)”",
-                              fix: "Install", action: { self.installRequirements([r]) })
+            return HealthItem(id: r.id, severity: .info, title: r.requirement.name, detail: localizedFormat("Suggested by %@: “%@”", by, r.requirement.notes),
+                              fix: localized("Install"), action: { self.installRequirements([r]) })
         }
     }
 
     /// Download (Premium) and install the main file of each missing requirement; FOMOD wizards appear one by one.
     func installRequirements(_ items: [RequirementIssue]) {
-        guard nexusKeyStored else { section = .downloads; message = "Add your Nexus Mods API key first (Downloads)."; return }
+        guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first (Downloads)."); return }
         guard nexusUser?.premium ?? false else {
             // free accounts: Nexus requires the website's download button for each file
             for r in items.prefix(5) { NSWorkspace.shared.open(URL(string: "https://www.nexusmods.com/skyrimspecialedition/mods/\(r.requirement.modID)?tab=files")!) }
-            message = "Free Nexus accounts download through the website: click “Mod Manager Download” on each page that opened — SkyrimMT installs them."
+            message = localized("Free Nexus accounts download through the website: click “Mod Manager Download” on each page that opened. SkyrimMT installs them.")
             return
         }
         let c = client(), folder = kit.home.appendingPathComponent("downloads")
-        busy = "Getting \(items.count) required mod\(items.count == 1 ? "" : "s")…"
+        busy = localizedFormat(items.count == 1 ? "Getting %ld required mod…" : "Getting %ld required mods…", items.count)
         Task.detached {
             var archives: [URL] = [], failed: [String] = []
             for (i, r) in items.enumerated() {
-                await MainActor.run { self.busy = "Downloading \(r.requirement.name) (\(i + 1)/\(items.count))…" }
+                await MainActor.run { self.busy = localizedFormat("Downloading %@ (%ld/%ld)…", r.requirement.name, i + 1, items.count) }
                 do {
                     guard let f = try await c.mainFile(modID: r.requirement.modID) else { failed.append(r.requirement.name); continue }
                     let job = await MainActor.run { self.beginDownload("\(r.requirement.name) \(f.version)") }
@@ -199,7 +199,7 @@ extension ModManagerModel {
             let got = archives, failedNames = failed
             await MainActor.run {
                 self.busy = nil
-                if !failedNames.isEmpty { self.message = "Couldn't get: \(failedNames.joined(separator: ", "))." }
+                if !failedNames.isEmpty { self.message = localizedFormat("Couldn't get: %@.", failedNames.joined(separator: ", ")) }
                 self.recheckHealthAfterInstall = true
                 self.install(got)          // FOMOD wizards appear in turn; Health re-checks after the last one
                 self.reloadDownloads()
@@ -215,9 +215,9 @@ struct HealthPage: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(items.isEmpty ? "Everything looks good" : "\(items.count) thing\(items.count == 1 ? "" : "s") to look at").font(.title3.bold())
+                    Text(items.isEmpty ? "Everything looks good" : localizedFormat(items.count == 1 ? "%ld thing to look at" : "%ld things to look at", items.count)).font(.title3.bold())
                     Text(model.healthChecking ? "Checking requirements on Nexus Mods…"
-                         : model.healthChecked.map { "Checked \($0.formatted(date: .omitted, time: .shortened)) · profile “\(model.profile)”" } ?? "Not checked yet")
+                         : model.healthChecked.map { localizedFormat("Checked %@ · profile “%@”", $0.formatted(date: .omitted, time: .shortened), model.profile) } ?? "Not checked yet")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -232,7 +232,7 @@ struct HealthPage: View {
                         if model.showSuggestions { ForEach(sug) { it in healthRow(it) } }
                     } header: {
                         Button { model.showSuggestions.toggle() } label: {
-                            Label("Optional suggestions from mod authors (\(sug.count))", systemImage: model.showSuggestions ? "chevron.down" : "chevron.right")
+                            Label(localizedFormat("Optional suggestions from mod authors (%ld)", sug.count), systemImage: model.showSuggestions ? "chevron.down" : "chevron.right")
                         }.buttonStyle(.plain)
                     }
                 }

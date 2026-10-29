@@ -32,18 +32,26 @@ extension ModManagerModel {
         guard let c = saveCheck, let s = saveSelected else { return }
         do {
             try kit.fixSave(c)
-            message = "Turned on \(c.fixable.count) plugin\(c.fixable.count == 1 ? "" : "s") this save uses — Deploy to apply. Undo: Profiles → History."
+            let key = c.fixable.count == 1
+                ? "Turned on %ld plugin this save uses — Deploy to apply. Undo: Profiles → History."
+                : "Turned on %ld plugins this save uses — Deploy to apply. Undo: Profiles → History."
+            message = localizedFormat(key, c.fixable.count)
             reload(); selectSave(s.url)
         } catch { message = "\(error)" }
     }
 
     func restoreBackup(_ b: SaveBackup) {
-        let a = NSAlert(); a.messageText = "Restore \(b.count) save\(b.count == 1 ? "" : "s") from \(b.date.formatted(date: .abbreviated, time: .shortened))?"
-        a.informativeText = "Newer saves are kept. Saves with the same name are replaced only if you choose Replace."
-        a.addButton(withTitle: "Restore missing"); a.addButton(withTitle: "Replace all"); a.addButton(withTitle: "Cancel")
+        let a = NSAlert()
+        let key = b.count == 1 ? "Restore %ld save from %@?" : "Restore %ld saves from %@?"
+        a.messageText = localizedFormat(key, b.count, b.date.formatted(date: .abbreviated, time: .shortened))
+        a.informativeText = localized("Newer saves are kept. Saves with the same name are replaced only if you choose Replace.")
+        a.addButton(withTitle: localized("Restore missing")); a.addButton(withTitle: localized("Replace all")); a.addButton(withTitle: localized("Cancel"))
         let r = a.runModal()
         guard r != .alertThirdButtonReturn else { return }
-        do { let n = try kit.restoreSaves(b, replace: r == .alertSecondButtonReturn); message = "Restored \(n) file\(n == 1 ? "" : "s")." } catch { message = "\(error)" }
+        do {
+            let n = try kit.restoreSaves(b, replace: r == .alertSecondButtonReturn)
+            message = localizedFormat(n == 1 ? "Restored %ld file." : "Restored %ld files.", n)
+        } catch { message = "\(error)" }
         loadSaves()
     }
 
@@ -64,8 +72,8 @@ struct SavesPage: View {
             List(selection: Binding(get: { model.saveSelected?.url }, set: { if let u = $0 { model.selectSave(u) } })) {
                 ForEach(model.saves) { s in
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("\(s.player) · level \(s.level)").fontWeight(.medium)
-                        Text("\(s.location) · \(s.saved.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                        Text(localizedFormat("%@ · level %ld", s.player, s.level)).fontWeight(.medium)
+                        Text(localizedFormat("%@ · %@", s.location, s.saved.formatted(date: .abbreviated, time: .shortened))).font(.caption).foregroundStyle(.secondary)
                     }.tag(s.url)
                 }
             }
@@ -77,7 +85,7 @@ struct SavesPage: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 0) {
                                     Text(b.date.formatted(date: .abbreviated, time: .shortened)).font(.caption)
-                                    Text("\(b.reason) · \(b.count) saves").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(localizedFormat(b.count == 1 ? "%@ · %ld save" : "%@ · %ld saves", b.reason, b.count)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                 }
                                 Spacer()
                                 Button("Restore…") { model.restoreBackup(b) }.controlSize(.small)
@@ -104,15 +112,19 @@ struct SavesPage: View {
                     Image(nsImage: img).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: 420).clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(s.player), level \(s.level) \(s.race.replacingOccurrences(of: "Race", with: ""))").font(.title3.bold())
-                    Text("\(s.location) · saved \(s.saved.formatted(date: .abbreviated, time: .shortened)) · \(s.plugins.count + s.lightPlugins.count) plugins").font(.caption).foregroundStyle(.secondary)
+                    Text(localizedFormat("%@, level %ld %@", s.player, s.level, s.race.replacingOccurrences(of: "Race", with: ""))).font(.title3.bold())
+                    let pluginCount = s.plugins.count + s.lightPlugins.count
+                    Text(localizedFormat(pluginCount == 1 ? "%@ · saved %@ · %ld plugin" : "%@ · saved %@ · %ld plugins", s.location, s.saved.formatted(date: .abbreviated, time: .shortened), pluginCount)).font(.caption).foregroundStyle(.secondary)
                 }
                 if c.ok {
-                    Label("Safe to load with “\(model.profile)” — every plugin it uses is active.", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                    Label(localizedFormat("Safe to load with “%@” — every plugin it uses is active.", model.profile), systemImage: "checkmark.seal.fill").foregroundStyle(.green)
                 } else {
                     if !c.fixable.isEmpty {
                         HStack(alignment: .top) {
-                            Label("\(c.fixable.count) plugin\(c.fixable.count == 1 ? "" : "s") this save uses \(c.fixable.count == 1 ? "is" : "are") installed but switched off.", systemImage: "exclamationmark.triangle.fill")
+                            let key = c.fixable.count == 1
+                                ? "%ld plugin this save uses is installed but switched off."
+                                : "%ld plugins this save uses are installed but switched off."
+                            Label(localizedFormat(key, c.fixable.count), systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                             Spacer()
                             Button("Turn on") { model.fixSelectedSave() }.disabled(model.busy != nil)
@@ -120,7 +132,10 @@ struct SavesPage: View {
                         Text(c.fixable.prefix(12).map(\.plugin).joined(separator: ", ") + (c.fixable.count > 12 ? "…" : "")).font(.caption).foregroundStyle(.secondary)
                     }
                     if !c.missing.isEmpty {
-                        Label("\(c.missing.count) plugin\(c.missing.count == 1 ? "" : "s") this save uses \(c.missing.count == 1 ? "is" : "are") not installed. Loading it anyway drops what they added (items, quests, places) and can break the save.", systemImage: "xmark.octagon.fill")
+                        let key = c.missing.count == 1
+                            ? "%ld plugin this save uses is not installed. Loading it anyway drops what it added (items, quests, places) and can break the save."
+                            : "%ld plugins this save uses are not installed. Loading it anyway drops what they added (items, quests, places) and can break the save."
+                        Label(localizedFormat(key, c.missing.count), systemImage: "xmark.octagon.fill")
                             .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                         Text(c.missing.prefix(20).joined(separator: ", ") + (c.missing.count > 20 ? "…" : "")).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         if c.missing.count > 20 || s.allPlugins.count > 50 && c.missing.count * 2 > s.allPlugins.count {
@@ -129,7 +144,10 @@ struct SavesPage: View {
                     }
                 }
                 if !c.added.isEmpty {
-                    Text("\(c.added.count) active plugin\(c.added.count == 1 ? " is" : "s are") new since this save — usually fine.").font(.caption).foregroundStyle(.secondary)
+                    let key = c.added.count == 1
+                        ? "%ld active plugin is new since this save — usually fine."
+                        : "%ld active plugins are new since this save — usually fine."
+                    Text(localizedFormat(key, c.added.count)).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([s.url]) }; Spacer() }
             }

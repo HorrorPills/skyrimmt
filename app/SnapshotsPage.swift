@@ -4,40 +4,46 @@ import AppKit
 
 extension ModManagerModel {
     nonisolated static func listNames(_ names: [String]) -> String {
-        names.count <= 2 ? names.joined(separator: " and ") : "\(names[0]), \(names[1]) and \(names.count - 2) more"
+        if names.count == 1 { return names[0] }
+        if names.count == 2 { return localizedFormat("%@ and %@", names[0], names[1]) }
+        return localizedFormat("%@, %@ and %ld more", names[0], names[1], names.count - 2)
     }
 
     /// Before a risky change: quiet (a failed snapshot never blocks the change; it's reported).
     func autoSnapshot(_ reason: String, mods: [String] = []) {
-        do { try kit.takeSnapshot(reason: reason, mods: mods) } catch { message = "Snapshot failed: \(error)" }
+        do { try kit.takeSnapshot(reason: reason, mods: mods) } catch { message = localizedFormat("Snapshot failed: %@", "\(error)") }
         snapshots = kit.snapshots()
     }
 
     func reloadSnapshots() { let k = kit; Task.detached { let s = k.snapshots(); await MainActor.run { self.snapshots = s } } }
 
     func takeSnapshotNow() {
-        do { try kit.takeSnapshot(reason: "Taken by hand"); message = "Snapshot taken." } catch { message = "\(error)" }
+        do { try kit.takeSnapshot(reason: localized("Taken by hand")); message = localized("Snapshot taken.") } catch { message = "\(error)" }
         snapshots = kit.snapshots()
     }
 
     func restoreSnapshot(_ s: Snapshot) {
-        guard !gameRunning() else { message = "Quit Skyrim before restoring."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim before restoring."); return }
         let a = NSAlert()
-        a.messageText = "Restore “\(s.reason)”?"
-        a.informativeText = "Restores the mod list, load order and game settings of \(s.profile)"
-            + (s.savedMods.isEmpty ? "." : ", and the files of \(s.savedMods.count) mod\(s.savedMods.count == 1 ? "" : "s").")
-            + " Saves are not changed. The current setup is snapshotted first."
-        a.addButton(withTitle: "Restore"); a.addButton(withTitle: "Cancel")
+        a.messageText = localizedFormat("Restore “%@”?", s.reason)
+        let files = s.savedMods.count
+        let key = files == 0
+            ? "Restores the mod list, load order and game settings of %@. Saves are not changed. The current setup is snapshotted first."
+            : (files == 1
+                ? "Restores the mod list, load order, game settings and files of %ld mod for %@. Saves are not changed. The current setup is snapshotted first."
+                : "Restores the mod list, load order, game settings and files of %ld mods for %@. Saves are not changed. The current setup is snapshotted first.")
+        a.informativeText = files == 0 ? localizedFormat(key, s.profile) : localizedFormat(key, files, s.profile)
+        a.addButton(withTitle: localized("Restore")); a.addButton(withTitle: localized("Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let k = kit
-        busy = "Restoring…"
+        busy = localized("Restoring…")
         Task.detached {
             do {
                 let r = try k.restoreSnapshot(s)
                 _ = try k.deploy()
-                var m = "Restored “\(s.reason)”."
-                if !r.restoredFiles.isEmpty { m += " Files restored for " + ModManagerModel.listNames(r.restoredFiles) + "." }
-                if !r.missing.isEmpty { m += " No longer installed: " + ModManagerModel.listNames(r.missing) + "." }
+                var m = localizedFormat("Restored “%@”.", s.reason)
+                if !r.restoredFiles.isEmpty { m += " " + localizedFormat("Files restored for %@.", ModManagerModel.listNames(r.restoredFiles)) }
+                if !r.missing.isEmpty { m += " " + localizedFormat("No longer installed: %@.", ModManagerModel.listNames(r.missing)) }
                 let done = m
                 await MainActor.run { self.busy = nil; self.message = done; self.snapshots = k.snapshots(); self.reload() }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload() } }
@@ -66,13 +72,13 @@ struct SnapshotsPage: View {
                     }
                     Spacer()
                     if s.profile == model.profile { Button("Restore") { model.restoreSnapshot(s) }.disabled(model.busy != nil) }
-                    else { Button("Switch to \(s.profile)") { model.switchProfile(s.profile) }.disabled(model.busy != nil || !model.profiles.contains(s.profile)) }
+                    else { Button(localizedFormat("Switch to %@", s.profile)) { model.switchProfile(s.profile) }.disabled(model.busy != nil || !model.profiles.contains(s.profile)) }
                 }
                 .padding(.vertical, 2)
                 .contextMenu { Button("Delete snapshot", role: .destructive) { model.deleteSnapshot(s) } }
             }
             .overlay { if model.snapshots.isEmpty { Text("No snapshots yet.").foregroundStyle(.secondary) } }
-            Text("The latest \(ModKit.snapshotsKept) snapshots are kept. Mod files are stored as APFS clones and use space only when the original changes.")
+            Text(localizedFormat("The latest %ld snapshots are kept. Mod files are stored as APFS clones and use space only when the original changes.", ModKit.snapshotsKept))
                 .font(.caption).foregroundStyle(.tertiary)
         }
         .padding(14)
@@ -80,9 +86,9 @@ struct SnapshotsPage: View {
     }
 
     private func detail(_ s: Snapshot) -> String {
-        var p = [s.date.formatted(date: .abbreviated, time: .shortened) + " (" + s.date.formatted(.relative(presentation: .named)) + ")", s.profile, "\(s.modCount) mods on"]
+        var p = [s.date.formatted(date: .abbreviated, time: .shortened) + " (" + s.date.formatted(.relative(presentation: .named)) + ")", s.profile, localizedFormat(s.modCount == 1 ? "%ld active mod" : "%ld active mods", s.modCount)]
         let files = s.savedMods.filter { !ModKit.isOverwrite($0) }.count
-        if files > 0 { p.append("files of \(files) mod\(files == 1 ? "" : "s") kept") }
+        if files > 0 { p.append(localizedFormat(files == 1 ? "files of %ld mod kept" : "files of %ld mods kept", files)) }
         return p.joined(separator: " · ")
     }
 }

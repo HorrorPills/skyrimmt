@@ -11,8 +11,13 @@ enum PluginFilter: String, CaseIterable, Identifiable {
 extension ModManagerModel {
     func flagLight(_ names: [String]) {
         let gv = kit.gameVersionKey == "steam" ? versionSteam : kit.gameVersionKey
-        undoable("Flag Plugins Light") {
-            do { let done = try kit.flagLight(names, gameVersion: gv); message = "Flagged \(done.count) plugin\(done.count == 1 ? "" : "s") light — Deploy to use them. Remove the “Light-flagged Plugins” mod to undo." }
+        undoable(localized("Flag Plugins Light")) {
+            do {
+                let done = try kit.flagLight(names, gameVersion: gv)
+                message = localizedFormat(done.count == 1
+                    ? "Flagged %ld plugin light — Deploy to use it. Remove the “Light-flagged Plugins” mod to undo."
+                    : "Flagged %ld plugins light — Deploy to use them. Remove the “Light-flagged Plugins” mod to undo.", done.count)
+            }
             catch { message = "\(error)" }
         }
         reload(); loadLightCandidates()
@@ -30,7 +35,7 @@ extension ModManagerModel {
     }
 
     func setPluginLocked(_ name: String, _ on: Bool) {
-        undoable(on ? "Lock \(name)" : "Unlock \(name)") {
+        undoable(localizedFormat(on ? "Lock %@" : "Unlock %@", name)) {
             do { try kit.setPluginLocked(name, on); if on { lockedPlugins.insert(name.lowercased()) } else { lockedPlugins.remove(name.lowercased()) } }
             catch { message = "\(error)" }
         }
@@ -65,7 +70,7 @@ struct PluginsPage: View {
             VStack(spacing: 0) {
                 HStack {
                     let c = model.pluginCounts
-                    Text("Top loads first, later plugins win · \(c.full)/254 full · \(c.light)/4096 light")
+                    Text(localizedFormat("Top loads first, later plugins win · %ld/254 full · %ld/4096 light", c.full, c.light))
                         .foregroundStyle(c.full > 254 || c.light > 4096 ? .red : .secondary).font(.callout)
                     Spacer()
                     if model.hasLoot {
@@ -79,7 +84,7 @@ struct PluginsPage: View {
                     let can = model.lightCandidates.filter { $0.reason == nil }
                     if !can.isEmpty {
                         HStack {
-                            Label("\(can.count) plugin\(can.count == 1 ? "" : "s") could be flagged light and free \(can.count == 1 ? "a" : "\(can.count)") full slot\(can.count == 1 ? "" : "s"): " + can.prefix(4).map(\.plugin).joined(separator: ", ") + (can.count > 4 ? "…" : ""),
+                            Label(localizedFormat(can.count == 1 ? "%ld plugin could be flagged light and free %ld full slot: %@" : "%ld plugins could be flagged light and free %ld full slots: %@", can.count, can.count, can.prefix(4).map(\.plugin).joined(separator: ", ") + (can.count > 4 ? "…" : "")),
                                   systemImage: "lightbulb").font(.caption).foregroundStyle(.secondary)
                             Spacer()
                             Button("Flag light") { model.flagLight(can.map(\.plugin)) }.controlSize(.small).disabled(model.busy != nil)
@@ -90,7 +95,9 @@ struct PluginsPage: View {
                 HStack(spacing: 8) {
                     let rows = model.visiblePlugins
                     SearchField(prompt: "Search plugins or mods", text: $model.pluginSearch, count: rows.count, total: model.plugins.count)
-                    Picker("", selection: $model.pluginFilter) { ForEach(PluginFilter.allCases) { Text($0.rawValue).tag($0) } }
+                    Picker("", selection: $model.pluginFilter) {
+                        ForEach(PluginFilter.allCases) { Text(localized($0.rawValue)).tag($0) }
+                    }
                         .labelsHidden().frame(width: 140)
                 }
                 .padding(.trailing, 10)
@@ -131,10 +138,10 @@ struct PluginsPage: View {
             let present = Set(model.plugins.map(\.id)), active = Set(model.plugins.filter(\.active).map(\.id))
             VStack(alignment: .leading, spacing: 10) {
                 Text(p.name).font(.title3.bold()).lineLimit(2)
-                Text(kindText(p.kind) + (p.implicit ? " · part of the game, always loaded" : "")).font(.caption).foregroundStyle(.secondary)
+                Text(kindText(p.kind) + (p.implicit ? localized(" · part of the game, always loaded") : "")).font(.caption).foregroundStyle(.secondary)
                 if !p.ownerName.isEmpty, let mid = p.ownerID {
                     HStack {
-                        Text("From mod: \(p.ownerName)").font(.callout)
+                        Text(localizedFormat("From mod: %@", p.ownerName)).font(.callout)
                         Spacer()
                         Button("Show") { model.modSearch = ""; model.modFilter = .all; model.section = .mods; model.selectedIDs = [mid]; model.refreshDetail() }
                     }
@@ -145,19 +152,19 @@ struct PluginsPage: View {
                 }
                 if let d = model.dirtyPlugins[p.id] ?? model.dirtyPlugins.first(where: { $0.key.lowercased() == p.id })?.value {
                     VStack(alignment: .leading, spacing: 4) {
-                        Label("Needs cleaning: \(d.summary)", systemImage: "sparkles").font(.callout)
+                        Label(localizedFormat("Needs cleaning: %@", d.summary), systemImage: "sparkles").font(.callout)
                         if d.autoCleanable { Button("Clean with xEdit") { model.cleanPlugins([p.name]) }.disabled(model.busy != nil) }
                         XEditCredit()
                     }.padding(8).background(Color.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                 }
                 if let c = model.lightCandidates.first(where: { $0.plugin.lowercased() == p.id }) {
                     HStack {
-                        Text(c.reason == nil ? "Could be flagged light (ESL): \(c.newRecords) new records, all in the light range — frees a full slot."
-                                             : "Can't be flagged light: \(c.reason!).").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(c.reason == nil ? localizedFormat("Could be flagged light (ESL): %ld new records, all in the light range — frees a full slot.", c.newRecords)
+                                             : localizedFormat("Can't be flagged light: %@.", c.reason!)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if c.reason == nil { Button("Flag light") { model.flagLight([p.name]) }.controlSize(.small).disabled(model.busy != nil) }
                     }
                 }
-                if !p.author.isEmpty { Text("Author: \(p.author)").font(.callout) }
+                if !p.author.isEmpty { Text(localizedFormat("Author: %@", p.author)).font(.callout) }
                 if !p.about.isEmpty { Text(p.about).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
                 if !p.issues.isEmpty {
                     ForEach(p.issues, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout) }
@@ -190,7 +197,7 @@ struct PluginsPage: View {
                         }
                     }
                 }
-                Text("Needs (\(p.masters.count))").font(.headline)
+                Text(localizedFormat("Needs (%ld)", p.masters.count)).font(.headline)
                 if p.masters.isEmpty { Text("Nothing — loads on its own.").font(.caption).foregroundStyle(.secondary) }
                 ForEach(p.masters, id: \.self) { m in
                     let l = m.lowercased()
@@ -202,10 +209,10 @@ struct PluginsPage: View {
                         else if !active.contains(l) { Text("inactive").font(.caption).foregroundStyle(.orange) }
                     }.font(.callout)
                 }
-                Text("Needed by (\(p.requiredBy.count))").font(.headline)
+                Text(localizedFormat("Needed by (%ld)", p.requiredBy.count)).font(.headline)
                 if p.requiredBy.isEmpty { Text("No active plugin needs it.").font(.caption).foregroundStyle(.secondary) }
                 ForEach(p.requiredBy.prefix(30), id: \.self) { d in Button(d) { model.selectedPlugin = d.lowercased() }.buttonStyle(.plain).font(.callout) }
-                if p.requiredBy.count > 30 { Text("… and \(p.requiredBy.count - 30) more").font(.caption).foregroundStyle(.secondary) }
+                if p.requiredBy.count > 30 { Text(localizedFormat("… and %ld more", p.requiredBy.count - 30)).font(.caption).foregroundStyle(.secondary) }
             }
         } else {
             VStack(spacing: 6) {

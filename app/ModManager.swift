@@ -232,15 +232,15 @@ final class ModManagerModel: ObservableObject {
     /// Download a pinned version (Steam depots under the player's account; first time: QR login in the Steam app).
     func downloadVersion(_ v: String) {
         guard versionDownloading == nil else { return }
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
-        versionDownloading = v; versionStep = "Starting…"; versionProgress = nil; qrLines = []; versionError = nil
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
+        versionDownloading = v; versionStep = localized("Starting…"); versionProgress = nil; qrLines = []; versionError = nil
         var collecting = false
         let ok = spawnDetached(["/bin/bash", Paths.script("versions.sh"), "download", v], env: scriptEnv(), onOutput: { line in
             Task { @MainActor in
                 if line.hasPrefix("STEP ") { self.versionStep = String(line.dropFirst(5)) }
-                else if line == "QRSTART" { collecting = true; self.qrLines = []; self.versionStep = "Scan the QR code with the Steam mobile app" }
+                else if line == "QRSTART" { collecting = true; self.qrLines = []; self.versionStep = localized("Scan the QR code with the Steam mobile app") }
                 else if line.hasPrefix("QR ") { if collecting { self.qrLines.append(String(line.dropFirst(3))) } }
-                else if line.hasPrefix("LOGGEDIN ") { collecting = false; self.qrLines = []; self.versionStep = "Signed in as \(line.dropFirst(9)) — downloading…" }
+                else if line.hasPrefix("LOGGEDIN ") { collecting = false; self.qrLines = []; self.versionStep = localizedFormat("Signed in as %@. Downloading…", "\(line.dropFirst(9))") }
                 else if line.hasPrefix("PROGRESS ") { collecting = false; if !self.qrLines.isEmpty { self.qrLines = [] }; self.versionProgress = Double(line.dropFirst(9)).map { $0 / 100 } }
                 else if line.hasPrefix("FAIL ") { self.versionError = String(line.dropFirst(5)) }
                 else if line.hasPrefix("DONE ") { self.versionStep = String(line.dropFirst(5)) }
@@ -250,18 +250,18 @@ final class ModManagerModel: ObservableObject {
                 let v = self.versionDownloading ?? ""
                 self.versionDownloading = nil; self.qrLines = []
                 self.refreshVersions()
-                if code == 0 { self.message = "Skyrim \(v) is ready."; self.selectVersion(v) }
-                else { self.message = "Skyrim \(v): " + (self.versionError ?? "download failed") }
+                if code == 0 { self.message = localizedFormat("Skyrim %@ is ready.", v); self.selectVersion(v) }
+                else { self.message = localizedFormat("Skyrim %@: %@", v, self.versionError ?? localized("download failed")) }
             }
         })
-        if !ok { versionDownloading = nil; message = "Couldn't start the download." }
+        if !ok { versionDownloading = nil; message = localized("Couldn't start the download.") }
     }
 
     /// Use another game folder for the current profile: mods leave the old folder and are deployed into the new one.
     func selectVersion(_ v: String, then: (() -> Void)? = nil) {
         guard v != versionCurrent || kit.gameVersionKey != v else { then?(); return }
-        guard !gameRunning() else { message = "Quit Skyrim before switching versions."; return }
-        busy = "Switching to Skyrim \(v == "steam" ? versionSteam : v)…"
+        guard !gameRunning() else { message = localized("Quit Skyrim before switching versions."); return }
+        busy = localizedFormat("Switching to Skyrim %@…", v == "steam" ? versionSteam : v)
         let old = kit
         Task.detached {
             do {
@@ -272,9 +272,9 @@ final class ModManagerModel: ObservableObject {
                 var p = try k.currentProfile(); p.gameVersion = v == "steam" ? nil : v; try k.saveProfile(p)
                 try k.deploy(p)
                 let pname = p.name
-                await MainActor.run { self.kit = k; self.busy = nil; self.message = "Now using Skyrim \(v == "steam" ? self.versionSteam : v) for “\(pname)”."; self.reload(); self.refreshVersions(); then?() }
+                await MainActor.run { self.kit = k; self.busy = nil; self.message = localizedFormat("Now using Skyrim %@ for “%@”.", v == "steam" ? self.versionSteam : v, pname); self.reload(); self.refreshVersions(); then?() }
             } catch {
-                await MainActor.run { self.busy = nil; self.message = "Version switch failed: \(error)"; self.reloadKit(); self.refreshVersions() }
+                await MainActor.run { self.busy = nil; self.message = localizedFormat("Version switch failed: %@", "\(error)"); self.reloadKit(); self.refreshVersions() }
             }
         }
     }
@@ -326,10 +326,10 @@ final class ModManagerModel: ObservableObject {
     }
 
     func lookUpCollection(_ text: String? = nil) {
-        guard let ref = CollectionRef(text ?? colText) else { message = "Paste a Skyrim Special Edition collection link from nexusmods.com."; return }
+        guard let ref = CollectionRef(text ?? colText) else { message = localized("Paste a Skyrim Special Edition collection link from nexusmods.com."); return }
         if let t = text { colText = t }
         colInfo = nil; colItems = []; colStates = []; colOptional = []
-        busy = "Looking up the collection…"
+        busy = localized("Looking up the collection…")
         let c = client()
         Task {
             do { colInfo = try await c.collection(ref); busy = nil; section = .collections }
@@ -345,22 +345,22 @@ final class ModManagerModel: ObservableObject {
 
     func installCollection() {
         guard let info = colInfo, !colRunning else { return }
-        guard !gameRunning() else { message = "Quit Skyrim before installing a collection."; return }
-        guard nexusKeyStored else { section = .downloads; message = "Add your Nexus Mods API key first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim before installing a collection."); return }
+        guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first."); return }
         let free = !(nexusUser?.premium ?? true)
         if free {
             // Nexus rule: free accounts start every download on the website. SkyrimMT opens each file's page in turn and
             // continues by itself when the link arrives (files already downloaded are reused without a click).
-            if !isNxmHandler { becomeNxmHandler(); guard isNxmHandler else { message = "Free accounts need SkyrimMT to receive “Mod Manager Download” links."; return } }
-            let a = NSAlert(); a.messageText = "Install \(info.name) with a free Nexus account"
-            a.informativeText = "Nexus asks free members to start each download on its website. SkyrimMT opens the page for each of the \(info.files.count) mods in turn — click “Slow download” there, and SkyrimMT downloads, installs and opens the next one. Files you already have are skipped. You can skip a mod or stop any time."
-            a.addButton(withTitle: "Start"); a.addButton(withTitle: "Cancel")
+            if !isNxmHandler { becomeNxmHandler(); guard isNxmHandler else { message = localized("Free accounts need SkyrimMT to receive “Mod Manager Download” links."); return } }
+            let a = NSAlert(); a.messageText = localizedFormat("Install %@ with a free Nexus account", info.name)
+            a.informativeText = localizedFormat("Nexus asks free members to start each download on its website. SkyrimMT opens the page for each of the %ld mods in turn. Click “Slow download” there, and SkyrimMT downloads, installs and opens the next one. Files you already have are skipped. You can skip a mod or stop any time.", info.files.count)
+            a.addButton(withTitle: localized("Start")); a.addButton(withTitle: localized("Cancel"))
             guard a.runModal() == .alertFirstButtonReturn else { return }
         }
         colCancelled = false
         Notify.prepare()
         colRunning = true
-        busy = "Downloading the collection's details…"
+        busy = localized("Downloading the collection's details…")
         // installers see the version the collection is made for (it gets pinned to it), not Steam's current one
         let target = info.gameVersions.compactMap { g in self.versionsKnown.first { g.hasPrefix($0) } }.first
         let k = kit, c = client(), optional = colOptional
@@ -372,7 +372,7 @@ final class ModManagerModel: ObservableObject {
                 try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
                 let manifest = try await c.downloadBundle(info, into: work)
                 let items = manifest.mods.filter { !$0.optional || ($0.fileID.map { optional.contains($0) } ?? false) }
-                await MainActor.run { self.colItems = items; self.colStates = items.map { _ in .queued }; self.busy = "Installing \(info.name)…" }
+                await MainActor.run { self.colItems = items; self.colStates = items.map { _ in .queued }; self.busy = localizedFormat("Installing %@…", info.name) }
                 let prof = try await k.installCollection(info: info, manifest: manifest, items: items, client: c, gameVersion: gv, progress: { i, st in
                     Task { @MainActor in if i < self.colStates.count { self.colStates[i] = st } }
                 }, nxmFor: free ? { item in await self.waitForNxm(item) } : nil)
@@ -381,24 +381,26 @@ final class ModManagerModel: ObservableObject {
                     self.colRunning = false; self.busy = nil
                     let failed = self.colStates.filter { if case .failed = $0 { return true }; return false }.count
                     let skipped = self.colStates.filter { if case .skipped = $0 { return true }; return false }.count
-                    self.message = "Installed \(info.name) into profile “\(prof)” and deployed." + (failed > 0 ? " \(failed) failed." : "") + (skipped > 0 ? " \(skipped) need manual steps." : "")
-                    Notify.send("\(info.name) is installed", failed > 0 ? "\(failed) mods failed — open SkyrimMT to repair." : "Ready to play.")
+                    self.message = localizedFormat("Installed %@ into profile “%@” and deployed.", info.name, prof)
+                        + (failed > 0 ? " " + localizedFormat("%ld failed.", failed) : "")
+                        + (skipped > 0 ? " " + localizedFormat("%ld need manual steps.", skipped) : "")
+                    Notify.send(localizedFormat("%@ is installed", info.name), failed > 0 ? localizedFormat("%ld mods failed — open SkyrimMT to repair.", failed) : localized("Ready to play."))
                     self.reload(); self.reloadCollections()
                     let rec = self.kit.installedCollections().first { $0.slug == info.slug }
                     if let failed = rec?.failed, !failed.isEmpty {
-                        self.message = "Installed \(info.name) — \(failed.count) mod(s) failed: \(failed.prefix(5).joined(separator: ", "))\(failed.count > 5 ? "…" : ""). Use Repair to retry."
+                        self.message = localizedFormat("Installed %@ — %ld mods failed: %@. Use Repair to retry.", info.name, failed.count, failed.prefix(5).joined(separator: ", ") + (failed.count > 5 ? "…" : ""))
                     }
                     // the version the collection really runs on: the SKSE it ships, else its metadata
                     let detected = rec?.gameVersion.flatMap { v in self.versionsKnown.first { v.hasPrefix($0) } ?? (v == self.versionSteam ? "steam" : nil) }
                     if let want = detected ?? info.gameVersions.compactMap({ g in self.versionsKnown.first { g.hasPrefix($0) } }).first,
                        want != "steam", want != self.kit.gameVersionKey {
                         if self.versionsInstalled.contains(want) { self.selectVersion(want) }
-                        else { self.message = "\(info.name) is made for Skyrim \(want). Game tab → Skyrim version → Download \(want), and SkyrimMT moves the collection there." }
+                        else { self.message = localizedFormat("%@ is made for Skyrim %@. Game tab → Skyrim version → Download %@, and SkyrimMT moves the collection there.", info.name, want, want) }
                     }
                 }
             } catch {
-                await MainActor.run { self.colRunning = false; self.busy = nil; self.message = "Collection: \(error)"; self.reload(); self.reloadCollections()
-                    Notify.send("Collection install stopped", "\(error)") }
+                await MainActor.run { self.colRunning = false; self.busy = nil; self.message = localizedFormat("Collection: %@", "\(error)"); self.reload(); self.reloadCollections()
+                    Notify.send(localized("Collection install stopped"), "\(error)") }
             }
         }
     }
@@ -407,11 +409,11 @@ final class ModManagerModel: ObservableObject {
     func waitForNxm(_ item: CollectionMod) async -> NxmLink? {
         guard !colCancelled, let mid = item.modID, let fid = item.fileID else { return nil }
         colWaiting = item
-        busy = "Waiting for you: click “Slow download” for \(item.name) on the page that opened"
+        busy = localizedFormat("Waiting for you: click “Slow download” for %@ on the page that opened", item.name)
         openFilePage(item)
         let link = await withCheckedContinuation { (c: CheckedContinuation<NxmLink?, Never>) in nxmWaiters["\(mid):\(fid)"] = c }
         colWaiting = nil
-        if !colCancelled { busy = "Installing the collection…" }
+        if !colCancelled { busy = localized("Installing the collection…") }
         return link
     }
 
@@ -436,15 +438,15 @@ final class ModManagerModel: ObservableObject {
     }
 
     func removeCollection(_ c: InstalledCollection) {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
-        let a = NSAlert(); a.messageText = "Remove the collection “\(c.name)”?"
-        a.informativeText = "Removes its profile and the mods only it uses, then switches back to “\(c.previousProfile)”."
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
+        let a = NSAlert(); a.messageText = localizedFormat("Remove the collection “%@”?", c.name)
+        a.informativeText = localizedFormat("Removes its profile and the mods only it uses, then switches back to “%@”.", c.previousProfile)
         a.addButton(withTitle: "Remove"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let k = kit
-        busy = "Removing \(c.name)…"
+        busy = localizedFormat("Removing %@…", c.name)
         Task.detached {
-            do { try k.removeCollection(slug: c.slug); await MainActor.run { self.busy = nil; self.message = "Removed \(c.name)."; self.reload(); self.reloadCollections() } }
+            do { try k.removeCollection(slug: c.slug); await MainActor.run { self.busy = nil; self.message = localizedFormat("Removed %@.", c.name); self.reload(); self.reloadCollections() } }
             catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload(); self.reloadCollections() } }
         }
     }
@@ -462,7 +464,7 @@ final class ModManagerModel: ObservableObject {
         if exe == nil {
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "exe") ?? .data]
-            panel.message = preset.map { "Find \($0.exe) (install the tool as a mod first, or pick it anywhere)" } ?? "Choose a Windows tool (.exe)"
+            panel.message = preset.map { localizedFormat("Find %@ (install the tool as a mod first, or pick it anywhere)", $0.exe) } ?? localized("Choose a Windows tool (.exe)")
             guard panel.runModal() == .OK else { return }
             exe = panel.url
         }
@@ -486,9 +488,9 @@ final class ModManagerModel: ObservableObject {
 
     /// Run a tool with the current deploy in place; afterwards its output is captured into the Overwrite mod.
     func runTool(_ t: ToolEntry) {
-        guard !gameRunning() else { message = "Quit Skyrim before running tools."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim before running tools."); return }
         guard toolRunning == nil else { return }
-        if (try? kit.isDirty()) == true { message = "Deploy your changes first, so the tool sees your current mods."; return }
+        if (try? kit.isDirty()) == true { message = localized("Deploy your changes first, so the tool sees your current mods."); return }
         let k = kit
         let snap: CaptureSnapshot, toolArgs: [String]
         do { (snap, toolArgs) = try k.beginToolRun(t) } catch { message = "\(error)"; return }
@@ -501,9 +503,9 @@ final class ModManagerModel: ObservableObject {
             await MainActor.run {
                 self.toolRunning = nil
                 self.message = r.status == 0 || !captured.isEmpty
-                    ? (output > 0 ? "\(t.name) closed — \(output) file(s) in “\(t.outputMod ?? "")”, deployed."
-                       : captured.isEmpty ? "\(t.name) closed — no new files." : "\(t.name) closed — \(captured.count) file(s) captured into Overwrite.")
-                    : "\(t.name): " + r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ? (output > 0 ? localizedFormat("%@ closed. %ld file(s) in “%@” deployed.", t.name, output, t.outputMod ?? "")
+                       : captured.isEmpty ? localizedFormat("%@ closed. No new files.", t.name) : localizedFormat("%@ closed. %ld file(s) captured into Overwrite.", t.name, captured.count))
+                    : localizedFormat("%@: %@", t.name, r.output.trimmingCharacters(in: .whitespacesAndNewlines))
                 self.reload()
             }
         }
@@ -521,31 +523,31 @@ final class ModManagerModel: ObservableObject {
 
     /// Asked, never silent (PLAN §8.7): another mod manager may own nxm links.
     func becomeNxmHandler() {
-        let a = NSAlert(); a.messageText = "Open Nexus “Mod Manager Download” links with SkyrimMT?"
-        a.informativeText = nxmHandler.isEmpty ? "No app handles these links yet." : "They currently open in \(nxmHandler). You can switch back from that app."
-        a.addButton(withTitle: "Use SkyrimMT"); a.addButton(withTitle: "Cancel")
+        let a = NSAlert(); a.messageText = localized("Open Nexus “Mod Manager Download” links with SkyrimMT?")
+        a.informativeText = nxmHandler.isEmpty ? localized("No app handles these links yet.") : localizedFormat("They currently open in %@. You can switch back from that app.", nxmHandler)
+        a.addButton(withTitle: localized("Use SkyrimMT")); a.addButton(withTitle: localized("Cancel"))
         guard a.runModal() == .alertFirstButtonReturn, let id = Bundle.main.bundleIdentifier else { return }
         LSSetDefaultHandlerForURLScheme("nxm" as CFString, id as CFString)
         refreshHandler()
-        message = isNxmHandler ? "SkyrimMT now opens Nexus Mod Manager Download links." : "macOS didn't change the handler."
+        message = isNxmHandler ? localized("SkyrimMT now opens Nexus Mod Manager Download links.") : localized("macOS didn’t change the handler.")
     }
 
     func saveKey(_ key: String) {
         let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !k.isEmpty else { return }
-        busy = "Checking the API key…"
+        busy = localized("Checking the API key…")
         let c = NexusClient(apiKey: k, appVersion: appVersion)
         Task {
             do {
                 let u = try await c.validate()
                 NexusKeychain.save(k)
                 nexusUser = u; nexusKeyStored = true; busy = nil
-                message = "Signed in to Nexus Mods as \(u.name)" + (u.premium ? " (Premium)." : ".")
+                message = u.premium ? localizedFormat("Signed in to Nexus Mods as %@ (Premium).", u.name) : localizedFormat("Signed in to Nexus Mods as %@.", u.name)
             } catch { busy = nil; message = "\(error)" }
         }
     }
 
-    func forgetKey() { NexusKeychain.delete(); nexusKeyStored = false; nexusUser = nil; message = "API key removed from the Keychain." }
+    func forgetKey() { NexusKeychain.delete(); nexusKeyStored = false; nexusUser = nil; message = localized("API key removed from the Keychain.") }
 
     func checkKey() {
         guard nexusKeyStored, nexusUser == nil else { return }
@@ -557,26 +559,26 @@ final class ModManagerModel: ObservableObject {
         if url.absoluteString.contains("/collections/"), CollectionRef(url.absoluteString) != nil {
             section = .collections; lookUpCollection(url.absoluteString); return
         }
-        guard let link = NxmLink(url.absoluteString) else { message = "Not a Nexus download link: \(url.absoluteString)"; return }
+        guard let link = NxmLink(url.absoluteString) else { message = localizedFormat("Not a Nexus download link: %@", url.absoluteString); return }
         if let c = nxmWaiters.removeValue(forKey: "\(link.modID):\(link.fileID)") { c.resume(returning: link); return }   // a guided collection install waits for it
-        guard nexusKeyStored else { section = .downloads; message = "Add your Nexus Mods API key (Downloads) to download from Nexus."; return }
+        guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key (Downloads) to download from Nexus."); return }
         let d = NexusDownloader(client: client(), folder: kit.home.appendingPathComponent("downloads"))
         let job = beginDownload("Nexus mod \(link.modID), file \(link.fileID)")
-        busy = "Downloading from Nexus Mods…"
+        busy = localized("Downloading from Nexus Mods…")
         downloadTasks[job] = Task {
             do {
                 let f = try await d.download(link) { got, total in
                     let pct = total.map { $0 > 0 ? " \(Int(Double(got) * 100 / Double($0))) %" : "" } ?? ""
-                    Task { @MainActor in self.busy = "Downloading from Nexus Mods…\(pct)"; self.downloadProgress(job, got, total) }
+                    Task { @MainActor in self.busy = localizedFormat("Downloading from Nexus Mods…%@", pct); self.downloadProgress(job, got, total) }
                 }
                 endDownload(job)
                 if let i = downloadJobs.firstIndex(where: { $0.id == job }) { downloadJobs[i].name = f.deletingPathExtension().lastPathComponent }
                 busy = nil; reload()
                 let meta = (try? Data(contentsOf: URL(fileURLWithPath: f.path + ".meta.json"))).flatMap { try? JSONDecoder().decode(DownloadMeta.self, from: $0) }
                 let title = meta.map { $0.version.isEmpty ? $0.modName : "\($0.modName) \($0.version)" } ?? f.lastPathComponent
-                let a = NSAlert(); a.messageText = "Downloaded \(title)"; a.informativeText = "Install it now?"
+                let a = NSAlert(); a.messageText = localizedFormat("Downloaded %@", title); a.informativeText = localized("Install it now?")
                 a.addButton(withTitle: "Install"); a.addButton(withTitle: "Later")
-                if a.runModal() == .alertFirstButtonReturn { install([f]) } else { message = "Saved in Downloads." }
+                if a.runModal() == .alertFirstButtonReturn { install([f]) } else { message = localized("Saved in Downloads.") }
             } catch { endDownload(job, error: error); busy = nil; message = error is CancellationError ? "Download stopped." : "\(error)" }
         }
     }
@@ -584,10 +586,10 @@ final class ModManagerModel: ObservableObject {
     /// Nexus update check (ModKit/Updates.swift): file update chains, recently changed mods first. `quiet`: automatic
     /// check (once a day) — no status message unless something is found.
     func checkUpdates(quiet: Bool = false) {
-        guard nexusKeyStored else { if !quiet { message = "Add your Nexus Mods API key to check for updates." }; return }
+        guard nexusKeyStored else { if !quiet { message = localized("Add your Nexus Mods API key to check for updates.") }; return }
         guard !updateChecking else { return }
         updateChecking = true
-        if !quiet { busy = "Checking Nexus Mods for updates…" }
+        if !quiet { busy = localized("Checking Nexus Mods for updates…") }
         let k = kit, c = client()
         Task.detached {
             let recent = Set(((try? await c.updated(period: "1m")) ?? [:]).keys)
@@ -598,8 +600,8 @@ final class ModManagerModel: ObservableObject {
                 if !quiet { self.busy = nil }
                 self.updates = Dictionary(uniqueKeysWithValues: ups.map { ($0.modRecordID, $0) })
                 let mine = self.updatableByHand.count
-                if !ups.isEmpty { self.message = "\(ups.count) mod update\(ups.count == 1 ? "" : "s") on Nexus" + (mine < ups.count ? " (\(ups.count - mine) pinned by a collection)" : "") + " — filter “Update available”." }
-                else if !quiet { self.message = "All Nexus mods are up to date." }
+                if !ups.isEmpty { self.message = localizedFormat(ups.count == 1 ? "%ld mod update on Nexus" : "%ld mod updates on Nexus", ups.count) + (mine < ups.count ? localizedFormat(" (%ld pinned by a collection)", ups.count - mine) : "") + localized(". Filter “Update available”.") }
+                else if !quiet { self.message = localized("All Nexus mods are up to date.") }
             }
         }
     }
@@ -624,24 +626,24 @@ final class ModManagerModel: ObservableObject {
         let pinned = mods.filter { r in items.contains { $0.modRecordID == r.id } && !r.collection.isEmpty }
         if !pinned.isEmpty {
             let a = NSAlert()
-            a.messageText = pinned.count == 1 ? "\(pinned[0].name) comes from \(pinned[0].collection)" : "\(pinned.count) of these mods come from a collection"
-            a.informativeText = "Collections pin tested versions. A newer version may require a newer game or conflict with the collection's patches. A snapshot is taken first."
-            a.addButton(withTitle: "Update anyway"); a.addButton(withTitle: "Cancel")
+            a.messageText = pinned.count == 1 ? localizedFormat("%@ comes from %@", pinned[0].name, pinned[0].collection) : localizedFormat("%ld of these mods come from a collection", pinned.count)
+            a.informativeText = localized("Collections pin tested versions. A newer version may require a newer game or conflict with the collection’s patches. A snapshot is taken first.")
+            a.addButton(withTitle: localized("Update anyway")); a.addButton(withTitle: localized("Cancel"))
             guard a.runModal() == .alertFirstButtonReturn else { return }
         }
-        autoSnapshot("Before updating " + ModManagerModel.listNames(items.map(\.modName)), mods: items.map(\.modRecordID))
+        autoSnapshot(localizedFormat("Before updating %@", ModManagerModel.listNames(items.map(\.modName))), mods: items.map(\.modRecordID))
         guard nexusUser?.premium ?? false else {
             for u in items.prefix(5) { NSWorkspace.shared.open(URL(string: "https://www.nexusmods.com/skyrimspecialedition/mods/\(u.nexusModID)?tab=files")!) }
-            message = "Free Nexus accounts download through the website: click “Mod Manager Download” on the new file of each page that opened."
+            message = localized("Free Nexus accounts download through the website. Click “Mod Manager Download” on the new file of each page that opened.")
             return
         }
         let k = kit, c = client(), folder = kit.home.appendingPathComponent("downloads"), gv = gameVersion()
         kit.backupSaves(reason: "before updating \(items.count) mod\(items.count == 1 ? "" : "s")")
-        busy = "Updating \(items.count) mod\(items.count == 1 ? "" : "s")…"
+        busy = items.count == 1 ? localizedFormat("Updating %ld mod…", items.count) : localizedFormat("Updating %ld mods…", items.count)
         Task.detached {
             var done = 0, failed: [String] = []
             for (i, u) in items.enumerated() {
-                await MainActor.run { self.busy = "Updating \(u.modName) to \(u.newVersion) (\(i + 1)/\(items.count))…" }
+                await MainActor.run { self.busy = localizedFormat("Updating %@ to %@ (%ld/%ld)…", u.modName, u.newVersion, i + 1, items.count) }
                 do {
                     let job = await MainActor.run { self.beginDownload("\(u.modName) \(u.newVersion)") }
                     let a: URL
@@ -669,7 +671,7 @@ final class ModManagerModel: ObservableObject {
             await MainActor.run {
                 self.busy = nil
                 self.updates = Dictionary(uniqueKeysWithValues: k.cachedUpdates().map { ($0.modRecordID, $0) })
-                self.message = (ok > 0 ? "Updated \(ok) mod\(ok == 1 ? "" : "s") — Deploy to use the new files. " : "") + (bad.isEmpty ? "" : "Couldn't update: " + bad.joined(separator: "; "))
+                self.message = (ok > 0 ? (ok == 1 ? localizedFormat("Updated %ld mod. Deploy to use the new files. ", ok) : localizedFormat("Updated %ld mods. Deploy to use the new files. ", ok)) : "") + (bad.isEmpty ? "" : localized("Couldn’t update: ") + bad.joined(separator: "; "))
                 self.reload(); self.reloadDownloads()
                 if ok > 0 { self.checkHealth() }
                 self.showNextWizard()
@@ -680,7 +682,7 @@ final class ModManagerModel: ObservableObject {
     func copyModList() {
         let gv = kit.gameVersionKey == "steam" ? versionSteam : kit.gameVersionKey
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(kit.modListMarkdown(gameVersion: gv), forType: .string)
-        message = "Mod list copied — paste it into your post (Markdown)."
+        message = localized("Mod list copied. Paste it into your post (Markdown).")
     }
 
     func reloadKit() { kit = ModKit.standard(home: URL(fileURLWithPath: Paths.game)); reload() }
@@ -791,13 +793,14 @@ final class ModManagerModel: ObservableObject {
         let items = downloadEntries.filter { ids.contains($0.id) }
         guard !items.isEmpty else { return }
         let size = ByteCountFormatter.string(fromByteCount: items.reduce(Int64(0)) { $0 + $1.size }, countStyle: .file)
-        let a = NSAlert(); a.messageText = items.count == 1 ? "Delete “\(items[0].url.lastPathComponent)”?" : "Delete \(items.count) archives (\(size))?"
-        a.informativeText = "Installed mods are not affected. Archives are only needed to reinstall or change installer options."
-        a.addButton(withTitle: "Delete"); a.addButton(withTitle: "Cancel"); a.buttons.first?.hasDestructiveAction = true
+        let a = NSAlert(); a.messageText = items.count == 1 ? localizedFormat("Delete archive “%@”?", items[0].url.lastPathComponent) : localizedFormat("Delete %ld archives (%@)?", items.count, size)
+        a.informativeText = localized("Installed mods are not affected. Archives are only needed to reinstall or change installer options.")
+        a.addButton(withTitle: localized("Delete")); a.addButton(withTitle: localized("Cancel")); a.buttons.first?.hasDestructiveAction = true
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let freed = kit.deleteDownloads(items.map(\.url))
         dlSelection = []
-        message = "Deleted \(items.count) archive\(items.count == 1 ? "" : "s"), \(ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)) freed."
+        let freedText = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)
+        message = items.count == 1 ? localizedFormat("Deleted %ld archive; %@ freed.", items.count, freedText) : localizedFormat("Deleted %ld archives; %@ freed.", items.count, freedText)
         reloadDownloads()
     }
 
@@ -831,7 +834,7 @@ final class ModManagerModel: ObservableObject {
     }
 
     func setEnabled(_ id: String, _ on: Bool) {
-        if !on, guardPlaythroughs(kit.pluginsLost(disabling: [id]), action: "Turn Off") == .cancelled { reload(); return }
+        if !on, guardPlaythroughs(kit.pluginsLost(disabling: [id]), action: localized("Turn Off")) == .cancelled { reload(); return }
         editProfile { p in
             if let i = p.mods.firstIndex(where: { $0.id == id }) { p.mods[i].enabled = on }
             else if on { ModManagerModel.addToProfile(&p, [id]) }
@@ -853,15 +856,15 @@ final class ModManagerModel: ObservableObject {
         guard !risks.isEmpty else { return .noRisk }
         let a = NSAlert()
         a.alertStyle = .warning
-        a.messageText = risks.count == 1 ? "\(risks[0].save.player)'s save uses this mod" : "\(risks.count) characters' saves use this mod"
+        a.messageText = risks.count == 1 ? localizedFormat("%@’s save uses this mod", risks[0].save.player) : localizedFormat("%ld characters’ saves use this mod", risks.count)
         var lines = risks.prefix(4).map { r in
-            "• \(r.save.player), level \(r.save.level) (saved \(r.save.saved.formatted(.relative(presentation: .named)))): \(r.plugins.joined(separator: ", "))"
+            localizedFormat("• %@, level %ld (saved %@): %@", r.save.player, r.save.level, r.save.saved.formatted(.relative(presentation: .named)), r.plugins.joined(separator: ", "))
         }
-        if risks.count > 4 { lines.append("and \(risks.count - 4) more") }
-        a.informativeText = "Saves store a mod's records, scripts and quest progress. Removing it mid-playthrough can cause missing items, broken quests or crashes on load.\n\n"
-            + lines.joined(separator: "\n") + "\n\nSaves are backed up before continuing."
-        a.addButton(withTitle: "Cancel")
-        a.addButton(withTitle: "\(action) Anyway")
+        if risks.count > 4 { lines.append(localizedFormat("and %ld more", risks.count - 4)) }
+        a.informativeText = localized("Saves store a mod’s records, scripts and quest progress. Removing it mid-playthrough can cause missing items, broken quests or crashes on load.") + "\n\n"
+            + lines.joined(separator: "\n") + "\n\n" + localized("Saves are backed up before continuing.")
+        a.addButton(withTitle: localized("Cancel"))
+        a.addButton(withTitle: localizedFormat("%@ Anyway", action))
         a.buttons[1].hasDestructiveAction = true
         guard a.runModal() == .alertSecondButtonReturn else { return .cancelled }
         _ = kit.backupSaves(reason: "before \(action.lowercased()): \(lost.joined(separator: ", "))")
@@ -878,24 +881,24 @@ final class ModManagerModel: ObservableObject {
 
     func remove(_ id: String) {
         guard let m = kit.mod(id) else { return }
-        let risk = guardPlaythroughs(kit.pluginsLost(disabling: [id]), action: "Remove")
+        let risk = guardPlaythroughs(kit.pluginsLost(disabling: [id]), action: localized("Remove"))
         if risk == .cancelled { return }
         if risk == .noRisk {
-            let a = NSAlert(); a.messageText = "Remove “\(m.name)”?"; a.informativeText = "Its files are removed from SkyrimMT. Deploy to remove it from the game."
-            a.addButton(withTitle: "Remove"); a.addButton(withTitle: "Cancel")
+            let a = NSAlert(); a.messageText = localizedFormat("Remove “%@”?", m.name); a.informativeText = localized("Its files are removed from SkyrimMT. Deploy to remove it from the game.")
+            a.addButton(withTitle: localized("Remove")); a.addButton(withTitle: localized("Cancel"))
             guard a.runModal() == .alertFirstButtonReturn else { return }
         }
-        autoSnapshot("Before removing \(m.name)", mods: [id])
+        autoSnapshot(localizedFormat("Before removing %@", m.name), mods: [id])
         do { try kit.removeMod(id); selectedIDs = [] } catch { message = "\(error)" }
         reload()
     }
 
     func createEmptyMod() {
-        guard let name = ask("Create empty mod", "Mod name", "") else { return }
+        guard let name = ask(localized("Create empty mod"), localized("Mod name"), "") else { return }
         do {
             let m = try kit.createEmptyMod(name: name)
             selectedIDs = [m.id]; section = .mods
-            message = "Created “\(m.name)”. Add files to its folder, then deploy."
+            message = localizedFormat("Created “%@”. Add files to its folder, then deploy.", m.name)
             NSWorkspace.shared.open(kit.stagingFolder(m))
         } catch { message = "\(error)" }
         reload()
@@ -909,7 +912,7 @@ final class ModManagerModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = ["7z", "zip", "rar", "gz", "tgz"].compactMap { UTType(filenameExtension: $0) }
-        panel.message = "Choose mod archives (downloaded from Nexus Mods or elsewhere)"
+        panel.message = localized("Choose mod archives (downloaded from Nexus Mods or elsewhere)")
         guard panel.runModal() == .OK else { return }
         install(panel.urls)
     }
@@ -922,7 +925,7 @@ final class ModManagerModel: ObservableObject {
         if let meta = try? JSONDecoder.isoDates.decode(DownloadMeta.self, from: Data(contentsOf: url.appendingPathExtension("meta.json"))),
            let u = updates.values.first(where: { $0.nexusModID == meta.modID && $0.newFileID == meta.fileID }) {
             let gv = gameVersion()
-            busy = "Updating \(u.modName) to \(u.newVersion)…"
+            busy = localizedFormat("Updating %@ to %@…", u.modName, u.newVersion)
             Task.detached {
                 do {
                     let p = try k.prepareUpdate(u.modRecordID, archive: url, gameVersion: gv)
@@ -937,14 +940,14 @@ final class ModManagerModel: ObservableObject {
                     }
                     defer { try? FileManager.default.removeItem(at: p.work) }
                     try k.finishUpdate(u.modRecordID, work: p.work, layout: p.layout, fomod: p.fomod, archive: url, nexusFileID: u.newFileID, version: u.newVersion)
-                    await MainActor.run { self.busy = nil; self.message = "Updated \(u.modName) to \(u.newVersion). Deploy to use the new files."; self.reload(); self.install(rest) }
+                    await MainActor.run { self.busy = nil; self.message = localizedFormat("Updated %@ to %@. Deploy to use the new files.", u.modName, u.newVersion); self.reload(); self.install(rest) }
                 } catch {
-                    await MainActor.run { self.busy = nil; self.message = "Couldn't update \(u.modName): \(error)"; self.reload(); self.install(rest) }
+                    await MainActor.run { self.busy = nil; self.message = localizedFormat("Couldn’t update %@: %@", u.modName, "\(error)"); self.reload(); self.install(rest) }
                 }
             }
             return
         }
-        busy = "Unpacking \(url.lastPathComponent)…"
+        busy = localizedFormat("Unpacking %@…", url.lastPathComponent)
         Task.detached {
             do {
                 let (work, layout) = try k.beginInstall(archive: url)
@@ -968,9 +971,9 @@ final class ModManagerModel: ObservableObject {
                 }
                 if case .unknown = layout {
                     let ok = await MainActor.run { () -> Bool in
-                        let a = NSAlert(); a.messageText = "Unusual mod layout"
-                        a.informativeText = "No plugins or game folders found in \(url.lastPathComponent). Install its files into Data as they are?"
-                        a.addButton(withTitle: "Install as is"); a.addButton(withTitle: "Cancel")
+                        let a = NSAlert(); a.messageText = localized("Unusual mod layout")
+                        a.informativeText = localizedFormat("No plugins or game folders found in %@. Install its files into Data as they are?", url.lastPathComponent)
+                        a.addButton(withTitle: localized("Install as is")); a.addButton(withTitle: localized("Cancel"))
                         return a.runModal() == .alertFirstButtonReturn
                     }
                     if !ok { try? FileManager.default.removeItem(at: work); await MainActor.run { self.busy = nil; self.install(rest) }; return }
@@ -984,7 +987,7 @@ final class ModManagerModel: ObservableObject {
 
     func finish(work: URL, layout: ModLayout, name: String, fomod: FomodInstaller?, archive: URL, then rest: [URL]) {
         let k = kit
-        busy = "Installing \(name)…"
+        busy = localizedFormat("Installing %@…", name)
         Task.detached {
             do {
                 let meta = await MainActor.run { self.pendingMeta.removeValue(forKey: archive.path) ?? nil }
@@ -992,7 +995,7 @@ final class ModManagerModel: ObservableObject {
                                     source: SourceArchive(path: archive.path, md5: meta?.md5),
                                     nexus: meta.map { NexusRef(modID: $0.modID, fileID: $0.fileID) })
                 await MainActor.run {
-                    self.busy = nil; self.message = "Installed \(name). Deploy to use it in the game."; self.reload(); self.install(rest)
+                    self.busy = nil; self.message = localizedFormat("Installed %@. Deploy to use it in the game.", name); self.reload(); self.install(rest)
                     if rest.isEmpty && self.recheckHealthAfterInstall { self.recheckHealthAfterInstall = false; self.checkHealth() }
                     if rest.isEmpty && self.deployAfterInstall { self.deployAfterInstall = false; self.deploy() }
                 }
@@ -1014,11 +1017,11 @@ final class ModManagerModel: ObservableObject {
     func reinstall(_ id: String) {
         guard let m = kit.mod(id) else { return }
         guard let archive = kit.sourceArchive(of: id) else {
-            message = "The archive \(m.name) was installed from is gone — download it again (Nexus page), then Reinstall."; return
+            message = localizedFormat("The archive %@ was installed from is gone. Download it again from its Nexus page, then choose Reinstall.", m.name); return
         }
-        autoSnapshot("Before reinstalling \(m.name)", mods: [id])
+        autoSnapshot(localizedFormat("Before reinstalling %@", m.name), mods: [id])
         let k = kit, gv = gameVersion()
-        busy = "Unpacking \(m.name)…"
+        busy = localizedFormat("Unpacking %@…", m.name)
         Task.detached {
             do {
                 let (work, layout) = try k.beginInstall(archive: archive)
@@ -1033,7 +1036,7 @@ final class ModManagerModel: ObservableObject {
                     }
                 } else {
                     try k.reinstallMod(id, work: work, layout: layout, fomod: nil)
-                    await MainActor.run { self.busy = nil; self.message = "Reinstalled \(m.name) — Deploy to use it."; self.reload() }
+                    await MainActor.run { self.busy = nil; self.message = localizedFormat("Reinstalled %@. Deploy to use it.", m.name); self.reload() }
                 }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(m.name): \(error)" } }
         }
@@ -1058,13 +1061,13 @@ final class ModManagerModel: ObservableObject {
         wizard = nil
         if let id = w.reinstallID, let up = w.update {
             let k = kit
-            busy = "Updating \(w.name)…"
+            busy = localizedFormat("Updating %@…", w.name)
             Task.detached {
                 let err: String? = { do { try k.finishUpdate(id, work: w.work, layout: w.layout, fomod: w.installer, archive: w.archive, nexusFileID: up.fileID, version: up.version); return nil } catch { return "\(error)" } }()
                 try? FileManager.default.removeItem(at: w.work)
                 await MainActor.run {
                     self.busy = nil
-                    self.message = err.map { "\(w.name): \($0)" } ?? "Updated \(w.name) to \(up.version). Deploy to use the new files."
+                    self.message = err.map { "\(w.name): \($0)" } ?? localizedFormat("Updated %@ to %@. Deploy to use the new files.", w.name, up.version)
                     self.reload(); self.install(w.rest); self.showNextWizard()
                 }
             }
@@ -1072,10 +1075,10 @@ final class ModManagerModel: ObservableObject {
         }
         if let id = w.reinstallID {
             let k = kit
-            busy = "Reinstalling \(w.name)…"
+            busy = localizedFormat("Reinstalling %@…", w.name)
             Task.detached {
                 let err: String? = { do { try k.reinstallMod(id, work: w.work, layout: w.layout, fomod: w.installer); return nil } catch { return "\(error)" } }()
-                await MainActor.run { self.busy = nil; self.message = err.map { "\(w.name): \($0)" } ?? "Reinstalled \(w.name) with the new options — Deploy to use them."; self.reload() }
+                await MainActor.run { self.busy = nil; self.message = err.map { "\(w.name): \($0)" } ?? localizedFormat("Reinstalled %@ with the new options. Deploy to use them.", w.name); self.reload() }
             }
             return
         }
@@ -1085,32 +1088,32 @@ final class ModManagerModel: ObservableObject {
     // MARK: deploy
 
     func deploy() {
-        guard !gameRunning() else { message = "Quit Skyrim before deploying."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim before deploying."); return }
         let k = kit
-        busy = "Deploying…"
+        busy = localized("Deploying…")
         Task.detached {
             do {
                 let r = try k.deploy()
-                var m = "Deployed in \(String(format: "%.1f", r.seconds)) s."
-                if !r.keptModified.isEmpty { m += " \(r.keptModified.count) file(s) changed outside SkyrimMT were left in place." }
+                var m = localizedFormat("Deployed in %@ s.", String(format: "%.1f", r.seconds))
+                if !r.keptModified.isEmpty { m += " " + localizedFormat("%ld file(s) changed outside SkyrimMT were left in place.", r.keptModified.count) }
                 m += await self.runStaleGenerators(k) { t in await MainActor.run { self.busy = t } }
                 let done = m
                 await MainActor.run { self.busy = nil; self.message = done; self.reload(); self.refreshPandora(); self.refreshBodySlide() }
-            } catch { await MainActor.run { self.busy = nil; self.message = "Deploy failed: \(error)"; self.reload() } }
+            } catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Deploy failed: %@", "\(error)"); self.reload() } }
         }
     }
 
     func purge() {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
-        let a = NSAlert(); a.messageText = "Remove all mods from the game folder?"
-        a.informativeText = "Restores the game folder to its unmodded state. Installed mods stay in SkyrimMT; Deploy adds them back."
-        a.addButton(withTitle: "Remove from game"); a.addButton(withTitle: "Cancel")
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
+        let a = NSAlert(); a.messageText = localized("Remove all mods from the game folder?")
+        a.informativeText = localized("Restores the game folder to its unmodded state. Installed mods stay in SkyrimMT; Deploy adds them back.")
+        a.addButton(withTitle: localized("Remove from game")); a.addButton(withTitle: localized("Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let k = kit
-        busy = "Removing mods from the game…"
+        busy = localized("Removing mods from the game…")
         Task.detached {
-            do { let r = try k.purge(); await MainActor.run { self.busy = nil; self.message = "Removed \(r.removed) files, restored \(r.restored)."; self.reload() } }
-            catch { await MainActor.run { self.busy = nil; self.message = "Purge failed: \(error)"; self.reload() } }
+            do { let r = try k.purge(); await MainActor.run { self.busy = nil; self.message = localizedFormat("Removed %ld files, restored %ld.", r.removed, r.restored); self.reload() } }
+            catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Purge failed: %@", "\(error)"); self.reload() } }
         }
     }
 
@@ -1130,16 +1133,16 @@ final class ModManagerModel: ObservableObject {
     }
 
     func setPluginActive(_ name: String, _ on: Bool) {
-        if !on, guardPlaythroughs([name], action: "Turn Off") == .cancelled { reload(); return }
+        if !on, guardPlaythroughs([name], action: localized("Turn Off")) == .cancelled { reload(); return }
         writeLoadOrder(plugins.map { $0.name == name ? PluginRow(name: $0.name, active: on, kind: $0.kind, masters: $0.masters, issues: [], implicit: $0.implicit) : $0 },
-                       undo: on ? "Activate \(name)" : "Deactivate \(name)")
+                       undo: on ? localizedFormat("Activate %@", name) : localizedFormat("Deactivate %@", name))
     }
 
     func movePlugins(_ from: IndexSet, _ to: Int) {
         let fixed = plugins.filter(\.implicit).count
-        guard from.allSatisfy({ $0 >= fixed }), to >= fixed else { message = "Bethesda's own plugins always load first."; return }
+        guard from.allSatisfy({ $0 >= fixed }), to >= fixed else { message = localized("Bethesda’s own plugins always load first."); return }
         var rows = plugins; rows.move(fromOffsets: from, toOffset: to); plugins = rows
-        writeLoadOrder(rows, undo: "Move Plugin")
+        writeLoadOrder(rows, undo: localized("Move Plugin"))
     }
 
     @Published var lootMessages: [String: [LootMessage]] = [:]
@@ -1158,10 +1161,10 @@ final class ModManagerModel: ObservableObject {
     }
 
     func lootSort() {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let k = kit, h = lootHelper, before = try? kit.currentProfile()
-        autoSnapshot("Before sorting with LOOT")
-        busy = "Sorting with LOOT…"
+        autoSnapshot(localized("Before sorting with LOOT"))
+        busy = localized("Sorting with LOOT…")
         Task.detached {
             do {
                 let r = try k.lootSort(helper: h)
@@ -1169,8 +1172,8 @@ final class ModManagerModel: ObservableObject {
                     self.busy = nil; self.lootMessages = r.plugins.reduce(into: [:]) { $0[$1.key.lowercased()] = $1.value }
                     self.lootGeneral = r.general.filter { $0.type != "say" }
                     let warns = r.plugins.values.flatMap { $0 }.filter { $0.type != "say" }.count
-                    self.message = "LOOT sorted \(r.sorted.count) plugins (\(r.moved) moved)" + (warns > 0 ? "; \(warns) warnings — hover the icons." : ".")
-                    self.commitUndo("Sort with LOOT", before: before)
+                    self.message = localizedFormat("LOOT sorted %ld plugins (%ld moved)", r.sorted.count, r.moved) + (warns > 0 ? localizedFormat("; %ld warnings. Hover over the icons.", warns) : ".")
+                    self.commitUndo(localized("Sort with LOOT"), before: before)
                     self.reload()
                 }
             } catch {
@@ -1180,7 +1183,7 @@ final class ModManagerModel: ObservableObject {
                     // "sort: found a cycle: A --[Hardcoded]-> B --[User Load After]-> A"
                     if let r = e.range(of: "found a cycle: ") {
                         let chain = e[r.upperBound...].replacingOccurrences(of: #"--\[([^\]]+)\]->"#, with: "→", options: .regularExpression)
-                        self.message = "LOOT can't sort: the rules contradict each other (\(chain)). Remove one of your “Load after” rules on the Plugins page."
+                        self.message = localizedFormat("LOOT can’t sort: the rules contradict each other (%@). Remove one of your “Load after” rules on the Plugins page.", "\(chain)")
                     } else { self.message = e }
                 }
             }
@@ -1201,7 +1204,7 @@ final class ModManagerModel: ObservableObject {
     /// Download a prebuilt tool the first time it's needed.
     nonisolated func ensureTool(_ k: ModKit, _ folder: String, status: (String) async -> Void) async throws {
         guard let p = ModManagerModel.toolPackages[folder], !k.toolInstalled(p) else { return }
-        await status("Downloading \(p.name)…")
+        await status(localizedFormat("Downloading %@…", p.name))
         try k.installToolPackage(p)
     }
 
@@ -1215,17 +1218,17 @@ final class ModManagerModel: ObservableObject {
 
     /// Pandora's own window on this profile's animation mods; the result becomes its Pandora Output when closed.
     func openPandora() {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let k = kit
-        busy = "Pandora is open. Close its window when done."
+        busy = localized("Pandora is open. Close its window when done.")
         Task.detached {
             do {
                 try await self.ensureTool(k, "pandora") { t in await MainActor.run { self.busy = t } }
-                await MainActor.run { self.busy = "Pandora is open. Close its window when done." }
+                await MainActor.run { self.busy = localized("Pandora is open. Close its window when done.") }
                 let r = try k.runPandora(interactive: true)
                 await MainActor.run {
                     self.busy = nil
-                    self.message = r.files == 0 ? "Pandora closed. No changes." : "Pandora output saved (\(r.files) files)."
+                    self.message = r.files == 0 ? localized("Pandora closed. No changes.") : localizedFormat("Pandora output saved (%ld files).", r.files)
                     self.reload(); self.refreshPandora()
                 }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload(); self.refreshPandora() } }
@@ -1233,19 +1236,19 @@ final class ModManagerModel: ObservableObject {
     }
 
     func runPandora(then: (() -> Void)? = nil) {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let k = kit
-        busy = "Generating animations (Pandora)…"
+        busy = localized("Generating animations (Pandora)…")
         Task.detached {
             do {
                 try await self.ensureTool(k, "pandora") { t in await MainActor.run { self.busy = t } }
-                await MainActor.run { self.busy = "Generating animations (Pandora)…" }
+                await MainActor.run { self.busy = localized("Generating animations (Pandora)…") }
                 let r = try k.runPandora()
                 await MainActor.run {
                     self.busy = nil
-                    self.pandoraLastRun = r.files == 0 ? "No animation mods need Pandora."
-                        : String(format: "%d files in %.1f s", r.files, r.seconds) + (r.errors.isEmpty ? "" : " · \(r.errors.count) errors (logs/pandora-engine.log)")
-                    self.message = r.files == 0 ? "No animation mods need Pandora." : "Animations generated (\(r.files) files)."
+                    self.pandoraLastRun = r.files == 0 ? localized("No animation mods need Pandora.")
+                        : localizedFormat("%ld files in %@ s", r.files, String(format: "%.1f", r.seconds)) + (r.errors.isEmpty ? "" : localizedFormat(" · %ld errors (logs/pandora-engine.log)", r.errors.count))
+                    self.message = r.files == 0 ? localized("No animation mods need Pandora.") : localizedFormat("Animations generated (%ld files).", r.files)
                     self.reload(); self.refreshPandora(); then?()
                 }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload(); self.refreshPandora() } }
@@ -1260,13 +1263,13 @@ final class ModManagerModel: ObservableObject {
         if bodySlide && !k.bodySlideInstalled && k.bodySlideNeedsRun() { do { try await ensureTool(k, "bodyslide", status: status) } catch { m += " \(error)" } }
         if pandora && !k.pandoraInstalled && k.pandoraNeedsRun() { do { try await ensureTool(k, "pandora", status: status) } catch { m += " \(error)" } }
         if bodySlide && k.bodySlideInstalled && k.bodySlideNeedsRun() {
-            await status("Building bodies and outfits (BodySlide)…")
-            do { let r = try k.runBodySlide(); m += r.files > 0 ? " Bodies built (\(r.outfits) outfits\(r.failed.isEmpty ? "" : ", \(r.failed.count) failed"))." : "" }
+            await status(localized("Building bodies and outfits (BodySlide)…"))
+            do { let r = try k.runBodySlide(); m += r.files > 0 ? " " + localizedFormat("Bodies built (%ld outfits%@).", r.outfits, r.failed.isEmpty ? "" : localizedFormat(", %ld failed", r.failed.count)) : "" }
             catch { m += " \(error)" }
         }
         if pandora && k.pandoraInstalled && k.pandoraNeedsRun() {
-            await status("Generating animations (Pandora)…")
-            do { let p = try k.runPandora(); m += p.files > 0 ? " Animations regenerated." : "" }
+            await status(localized("Generating animations (Pandora)…"))
+            do { let p = try k.runPandora(); m += p.files > 0 ? " " + localized("Animations regenerated.") : "" }
             catch { m += " \(error)" }
         }
         return m
@@ -1315,7 +1318,7 @@ final class ModManagerModel: ObservableObject {
         wjLoading = true
         Task {
             do { let g = try await k.loadWabbajackGallery(force: force); self.wjGallery = g }
-            catch { self.message = "Wabbajack gallery: \(error)" }
+            catch { self.message = localizedFormat("Wabbajack gallery: %@", "\(error)") }
             self.wjLoading = false
         }
     }
@@ -1325,7 +1328,7 @@ final class ModManagerModel: ObservableObject {
 
     func installWabbajackFile() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [UTType(filenameExtension: "wabbajack") ?? .data]; panel.allowsMultipleSelection = false
-        panel.message = "Choose a .wabbajack file"
+        panel.message = localized("Choose a .wabbajack file")
         guard panel.runModal() == .OK, let u = panel.url else { return }
         startWabbajack(title: u.deletingPathExtension().lastPathComponent, machine: nil, file: u, sizes: nil)
     }
@@ -1335,7 +1338,7 @@ final class ModManagerModel: ObservableObject {
         if !wjInstalled {
             guard ModManagerModel.toolPackages["wabbajack"] != nil else { message = WabbajackError.notInstalled.description; return }
             let k = kit
-            busy = "Downloading the Wabbajack engine…"
+            busy = localized("Downloading the Wabbajack engine…")
             Task.detached {
                 let err: String? = await { do { try await self.ensureTool(k, "wabbajack") { _ in }; return nil } catch { return "\(error)" } }()
                 await MainActor.run {
@@ -1345,22 +1348,22 @@ final class ModManagerModel: ObservableObject {
             }
             return
         }
-        guard nexusKeyStored else { section = .downloads; message = "Add your Nexus Mods API key first (Downloads)."; return }
+        guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first (Downloads)."); return }
         guard nexusUser?.premium ?? true else {
-            message = "Wabbajack downloads Nexus files automatically only for Premium accounts (Nexus rule)."; return
+            message = localized("Wabbajack downloads Nexus files automatically only for Premium accounts (Nexus rule)."); return
         }
         let free = (try? kit.home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage).map { Int64($0) } ?? 0
         let fmt = { (b: Int64) in ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
-        let a = NSAlert(); a.messageText = "Install “\(title)”?"
-        a.informativeText = (sizes.map { "Downloads \(fmt($0.0)), installs \(fmt($0.1)) — about \(fmt($0.0 + $0.1)) needed, \(fmt(free)) free.\n\n" } ?? "")
-            + "Wabbajack downloads every mod from Nexus with your Premium account, builds the list exactly as its author made it, and SkyrimMT then imports it as a new profile. You can keep playing while it runs; it never touches the game folder."
-        a.addButton(withTitle: "Install"); a.addButton(withTitle: "Cancel")
-        if let s = sizes, s.0 + s.1 > free { a.informativeText += "\n\n⚠︎ Not enough free disk space." }
+        let a = NSAlert(); a.messageText = localizedFormat("Install “%@”?", title)
+        a.informativeText = (sizes.map { localizedFormat("Downloads %@, installs %@. About %@ needed; %@ free.\n\n", fmt($0.0), fmt($0.1), fmt($0.0 + $0.1), fmt(free)) } ?? "")
+            + localized("Wabbajack downloads every mod from Nexus with your Premium account, builds the list exactly as its author made it, and SkyrimMT then imports it as a new profile. You can keep playing while it runs; it never touches the game folder.")
+        a.addButton(withTitle: localized("Install")); a.addButton(withTitle: localized("Cancel"))
+        if let s = sizes, s.0 + s.1 > free { a.informativeText += "\n\n" + localized("⚠︎ Not enough free disk space.") }
         guard skipConfirm || a.runModal() == .alertFirstButtonReturn else { return }
         let k = kit, e = wjEngine, key = NexusKeychain.load(), steamV = versionSteam
         wjFailure = nil; wjPhase = ""
         Notify.prepare()
-        wjRunning = title; wjStatus = "Getting the list…"; wjFraction = nil
+        wjRunning = title; wjStatus = localized("Getting the list…"); wjFraction = nil
         Task.detached {
             do {
                 let listFile = try file ?? k.downloadWabbajackFile(e, machineURL: machine!)
@@ -1368,7 +1371,7 @@ final class ModManagerModel: ObservableObject {
                 // the list's Skyrim version decides the game folder; the engine reads a vanilla view of it
                 let target = try k.gameDirFor(listVersion: info.gameVersion, steamGameDir: ModKit.steamGameDir(k.home), steamVersion: steamV)
                 let key2 = target.path.contains("/versions/") ? target.lastPathComponent : "steam"
-                await MainActor.run { self.wjStatus = "Preparing the game files (Skyrim \(info.gameVersion ?? steamV))…" }
+                await MainActor.run { self.wjStatus = localizedFormat("Preparing the game files (Skyrim %@)…", info.gameVersion ?? steamV) }
                 let vanilla = k.wabbajackDir.appendingPathComponent("vanilla-\(key2)")
                 try k.kit(forVersionKey: key2).deployer.makeVanillaView(at: vanilla)
                 let existing = k.installedWabbajackLists().first { $0.machineURL == (machine ?? "") && !(machine ?? "").isEmpty }
@@ -1385,9 +1388,9 @@ final class ModManagerModel: ObservableObject {
                 await MainActor.run {
                     self.wjRunning = nil; self.wjProcess = nil
                     self.wjInstalled2 = k.installedWabbajackLists()
-                    self.message = "Installed “\(title)” as profile “\(r.profile)” (\(r.mods) mods, \(r.plugins) plugins). Switch to it in Profiles."
-                        + (r.missing.isEmpty ? "" : " \(r.missing.count) mods were missing.")
-                    Notify.send("\(title) is installed", "\(r.mods) mods in profile “\(r.profile)”. Switch to it in SkyrimMT to play.")
+                    self.message = localizedFormat("Installed “%@” as profile “%@” (%ld mods, %ld plugins). Switch to it in Profiles.", title, r.profile, r.mods, r.plugins)
+                        + (r.missing.isEmpty ? "" : " " + localizedFormat("%ld mods were missing.", r.missing.count))
+                    Notify.send(localizedFormat("%@ is installed", title), localizedFormat("%ld mods in profile “%@”. Switch to it in SkyrimMT to play.", r.mods, r.profile))
                     self.reload()
                 }
             } catch {
@@ -1398,8 +1401,8 @@ final class ModManagerModel: ObservableObject {
                                                           log: k.home.appendingPathComponent("logs/wabbajack-\(ModKit.sanitize(title)).log"))
                     }
                     self.wjRunning = nil; self.wjProcess = nil
-                    if !cancelled { Notify.send("Installing \(title) stopped", "Open SkyrimMT → Wabbajack for the reason and Retry.") }
-                    self.message = cancelled ? "Stopped installing \(title). Downloads are kept — Install continues where it stopped." : "Installing \(title) stopped — see the Wabbajack page."
+                    if !cancelled { Notify.send(localizedFormat("Installing %@ stopped", title), localized("Open SkyrimMT → Wabbajack for the reason and Retry.")) }
+                    self.message = cancelled ? localizedFormat("Stopped installing %@. Downloads are kept; installation continues where it stopped.", title) : localizedFormat("Installing %@ stopped. See the Wabbajack page.", title)
                     self.reload()
                 }
             }
@@ -1412,11 +1415,11 @@ final class ModManagerModel: ObservableObject {
     }
 
     func clearWabbajackCache() {
-        let a = NSAlert(); a.messageText = "Delete Wabbajack's download cache?"
-        a.informativeText = "Installed lists keep working. Updating a list later downloads its files again (\(ByteCountFormatter.string(fromByteCount: wjCacheSize, countStyle: .file)))."
-        a.addButton(withTitle: "Delete"); a.addButton(withTitle: "Cancel"); a.buttons.first?.hasDestructiveAction = true
+        let a = NSAlert(); a.messageText = localized("Delete Wabbajack’s download cache?")
+        a.informativeText = localizedFormat("Installed lists keep working. Updating a list later downloads its files again (%@).", ByteCountFormatter.string(fromByteCount: wjCacheSize, countStyle: .file))
+        a.addButton(withTitle: localized("Delete")); a.addButton(withTitle: localized("Cancel")); a.buttons.first?.hasDestructiveAction = true
         guard a.runModal() == .alertFirstButtonReturn else { return }
-        do { let n = try kit.clearWabbajackDownloads(); message = "Freed \(ByteCountFormatter.string(fromByteCount: n, countStyle: .file))." } catch { message = "\(error)" }
+        do { let n = try kit.clearWabbajackDownloads(); message = localizedFormat("Freed %@.", ByteCountFormatter.string(fromByteCount: n, countStyle: .file)) } catch { message = "\(error)" }
         refreshWabbajackCacheSize()
     }
 
@@ -1430,21 +1433,21 @@ final class ModManagerModel: ObservableObject {
     /// Import a Mod Organizer 2 instance (folder with ModOrganizer.ini) as a new profile.
     func importMO2() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.message = "Choose a Mod Organizer 2 folder (the one with ModOrganizer.ini)"
+        panel.message = localized("Choose a Mod Organizer 2 folder (the one with ModOrganizer.ini)")
         guard panel.runModal() == .OK, let u = panel.url else { return }
         do {
             let inst = try MO2Instance.open(u)
-            guard let prof = inst.selectedProfile.flatMap({ inst.profiles.contains($0) ? $0 : nil }) ?? inst.profiles.first else { message = "That MO2 folder has no profiles."; return }
+            guard let prof = inst.selectedProfile.flatMap({ inst.profiles.contains($0) ? $0 : nil }) ?? inst.profiles.first else { message = localized("That MO2 folder has no profiles."); return }
             let k = kit, name = u.lastPathComponent
-            busy = "Importing \(name) (\(inst.modlist(prof).count) mods)…"
+            busy = localizedFormat("Importing %@ (%ld mods)…", name, inst.modlist(prof).count)
             Task.detached {
                 do {
                     let vanilla = k.wabbajackDir.appendingPathComponent("vanilla-\(k.gameVersionKey)")
                     try k.deployer.makeVanillaView(at: vanilla)
                     let r = try k.importMO2(inst, profile: prof, as: name, vanillaGame: vanilla, gameVersion: nil) { i, n, mod in
-                        Task { @MainActor in self.busy = "Importing \(mod) (\(i + 1)/\(n))…" }
+                        Task { @MainActor in self.busy = localizedFormat("Importing %@ (%ld/%ld)…", mod, i + 1, n) }
                     }
-                    await MainActor.run { self.busy = nil; self.message = "Imported “\(name)” as profile “\(r.profile)”: \(r.mods) mods, \(r.plugins) plugins."; self.reload() }
+                    await MainActor.run { self.busy = nil; self.message = localizedFormat("Imported “%@” as profile “%@”: %ld mods, %ld plugins.", name, r.profile, r.mods, r.plugins); self.reload() }
                 } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload() } }
             }
         } catch { message = "\(error)" }
@@ -1473,19 +1476,19 @@ final class ModManagerModel: ObservableObject {
     }
 
     func runBodySlide() {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let k = kit
-        busy = "Building bodies and outfits (BodySlide)…"
+        busy = localized("Building bodies and outfits (BodySlide)…")
         Task.detached {
             do {
                 try await self.ensureTool(k, "bodyslide") { t in await MainActor.run { self.busy = t } }
-                await MainActor.run { self.busy = "Building bodies and outfits (BodySlide)…" }
+                await MainActor.run { self.busy = localized("Building bodies and outfits (BodySlide)…") }
                 let r = try k.runBodySlide()
                 await MainActor.run {
                     self.busy = nil
-                    self.bodySlideLastRun = r.outfits == 0 ? "Nothing to build." : String(format: "%d outfits → %d files in %.1f s", r.outfits, r.files, r.seconds)
-                        + (r.failed.isEmpty ? "" : " · \(r.failed.count) failed (logs/bodyslide.log)")
-                    self.message = r.outfits == 0 ? "BodySlide: nothing to build for this profile." : "Bodies and outfits built (\(r.outfits))."
+                    self.bodySlideLastRun = r.outfits == 0 ? localized("Nothing to build.") : localizedFormat("%ld outfits → %ld files in %@ s", r.outfits, r.files, String(format: "%.1f", r.seconds))
+                        + (r.failed.isEmpty ? "" : localizedFormat(" · %ld failed (logs/bodyslide.log)", r.failed.count))
+                    self.message = r.outfits == 0 ? localized("BodySlide: nothing to build for this profile.") : localizedFormat("Bodies and outfits built (%ld).", r.outfits)
                     self.reload(); self.refreshBodySlide()
                 }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload(); self.refreshBodySlide() } }
@@ -1496,31 +1499,31 @@ final class ModManagerModel: ObservableObject {
     func openBodySlide() {
         let k = kit
         if !k.bodySlideInstalled {
-            busy = "Downloading BodySlide…"
+            busy = localized("Downloading BodySlide…")
             Task.detached {
                 let err: String? = await { do { try await self.ensureTool(k, "bodyslide") { _ in }; return nil } catch { return "\(error)" } }()
                 await MainActor.run { self.busy = nil; if let err { self.message = err } else { self.openBodySlide() } }
             }
             return
         }
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
-        busy = "Deploying, then opening BodySlide…"
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
+        busy = localized("Deploying, then opening BodySlide…")
         Task.detached {
             do {
                 _ = try k.prepareBodySlideWindow()
                 let p = Process(); p.executableURL = k.bodySlideDir.appendingPathComponent("BodySlide"); p.currentDirectoryURL = k.bodySlideDir
                 try p.run()
-                await MainActor.run { self.busy = nil; self.message = "BodySlide builds from its window go to the “Overwrite” mod. Deploy afterwards."; self.reload() }
-            } catch { await MainActor.run { self.busy = nil; self.message = "Couldn't open BodySlide: \(error)"; self.reload() } }
+                await MainActor.run { self.busy = nil; self.message = localized("BodySlide builds from its window go to the “Overwrite” mod. Deploy afterwards."); self.reload() }
+            } catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Couldn’t open BodySlide: %@", "\(error)"); self.reload() } }
         }
     }
 
     func basicSort() {
         let before = try? kit.currentProfile()
-        defer { commitUndo("Sort Plugins", before: before) }
+        defer { commitUndo(localized("Sort Plugins"), before: before) }
         do {
             try kit.basicSortKeepingLocks()
-            message = "Sorted: masters first, every plugin after its masters."
+            message = localized("Sorted: masters first, every plugin after its masters.")
         } catch { message = "\(error)" }
         reload()
     }
@@ -1529,13 +1532,13 @@ final class ModManagerModel: ObservableObject {
 
     func switchProfile(_ name: String) {
         guard name != profile else { return }
-        guard !gameRunning() else { message = "Quit Skyrim before switching profiles."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim before switching profiles."); return }
         // collection/list profiles keep their version even if never stored; "1.7.104" = Steam's install when it is that
         let want = ModKit.versionKey(kit.effectiveGameVersion(name), steamVersion: versionSteam, installed: versionsInstalled)
         if want != kit.gameVersionKey {
             // the profile is pinned to another Skyrim version: clear the old game folder, then switch inside the new one
-            guard want == "steam" || versionsInstalled.contains(want) else { message = "Profile \(name) needs Skyrim \(want) — download it in the Game tab."; return }
-            busy = "Switching to \(name) (Skyrim \(want))…"
+            guard want == "steam" || versionsInstalled.contains(want) else { message = localizedFormat("Profile %@ needs Skyrim %@. Download it in the Game tab.", name, want); return }
+            busy = localizedFormat("Switching to %@ (Skyrim %@)…", name, want)
             let old = kit
             Task.detached {
                 do {
@@ -1543,19 +1546,19 @@ final class ModManagerModel: ObservableObject {
                     _ = shell(["/bin/bash", Paths.script("versions.sh"), "select", want])
                     let k = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
                     _ = try k.switchProfile(to: name)
-                    await MainActor.run { self.kit = k; self.busy = nil; self.message = "Profile \(name) active (Skyrim \(want))."; self.reload(); self.refreshVersions() }
+                    await MainActor.run { self.kit = k; self.busy = nil; self.message = localizedFormat("Profile %@ active (Skyrim %@).", name, want); self.reload(); self.refreshVersions() }
                 } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reloadKit(); self.refreshVersions() } }
             }
             return
         }
         let k = kit
-        busy = "Switching to \(name)…"
+        busy = localizedFormat("Switching to %@…", name)
         Task.detached {
             let t0 = Date()
             do {
                 _ = try k.switchProfile(to: name)
                 let secs = Date().timeIntervalSince(t0)
-                await MainActor.run { self.busy = nil; self.message = "Profile \(name) active" + String(format: " (%.1f s).", secs); self.reload() }
+                await MainActor.run { self.busy = nil; self.message = localizedFormat("Profile %@ active (%@ s).", name, String(format: "%.1f", secs)); self.reload() }
             }
             catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload() } }
         }
@@ -1563,13 +1566,13 @@ final class ModManagerModel: ObservableObject {
 
     /// Re-download the installed revision's collection.json and re-apply the author's load order (mods untouched).
     func restoreCollectionLoadOrder(_ c: InstalledCollection) {
-        guard !gameRunning() else { message = "Quit Skyrim first."; return }
-        guard nexusKeyStored else { section = .downloads; message = "Add your Nexus Mods API key first."; return }
+        guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
+        guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first."); return }
         guard c.profile != profile || ModKit.versionKey(kit.effectiveGameVersion(c.profile), steamVersion: versionSteam, installed: versionsInstalled) == kit.gameVersionKey else {
-            message = "Switch “\(c.profile)” to Skyrim \(kit.effectiveGameVersion(c.profile)) first (Game tab)."; return
+            message = localizedFormat("Switch “%@” to Skyrim %@ first (Game tab).", c.profile, kit.effectiveGameVersion(c.profile)); return
         }
         let k = kit, client = client()
-        busy = "Restoring the load order of \(c.name)…"
+        busy = localizedFormat("Restoring the load order of %@…", c.name)
         Task.detached {
             do {
                 guard let ref = CollectionRef("https://www.nexusmods.com/games/skyrimspecialedition/collections/\(c.slug)/revisions/\(c.revision)") else { throw ModKitError.invalid("bad collection") }
@@ -1581,8 +1584,8 @@ final class ModManagerModel: ObservableObject {
                 try k.applyCollectionLoadOrder(slug: c.slug, manifest: manifest)
                 try? FileManager.default.removeItem(at: work)
                 let n = manifest.loadOrder.filter(\.active).count
-                await MainActor.run { self.busy = nil; self.message = "Load order of “\(c.profile)” restored from \(c.name) rev \(c.revision) (\(n) active plugins)."; self.reload() }
-            } catch { await MainActor.run { self.busy = nil; self.message = "Restore failed: \(error)"; self.reload() } }
+                await MainActor.run { self.busy = nil; self.message = localizedFormat("Load order of “%@” restored from %@ rev %@ (%ld active plugins).", c.profile, c.name, c.revision, n); self.reload() }
+            } catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Restore failed: %@", "\(error)"); self.reload() } }
         }
     }
 
@@ -1591,13 +1594,16 @@ final class ModManagerModel: ObservableObject {
     /// "Skyrim 1.6.1170 · 412 of 430 mods · own game settings · from collection"
     func profileInfo(_ name: String) -> String {
         guard let p = kit.profile(name) else { return "" }
-        var parts = ["Skyrim \(kit.effectiveGameVersion(name) == "steam" ? (versionSteam.isEmpty ? "(Steam)" : versionSteam + " (Steam)") : kit.effectiveGameVersion(name))",
-                     "\(p.mods.filter(\.enabled).count) of \(p.mods.count) mods"]
-        if kit.hasOwnINIs(name) { parts.append("own game settings") }
-        if p.separateSaves { parts.append("own saves") }
-        if let c = kit.installedCollections().first(where: { $0.profile == name }) { parts.append("collection “\(c.name)”") }
-        if let d = kit.lastPlayed()[name] { parts.append("played " + d.formatted(.relative(presentation: .named))) }
-        if instantSwitching && kit.parkedProfiles().contains(name) { parts.append("instant switch ready") }
+        let version = kit.effectiveGameVersion(name)
+        var parts = [version == "steam"
+                         ? (versionSteam.isEmpty ? localized("Skyrim (Steam)") : localizedFormat("Skyrim %@ (Steam)", versionSteam))
+                         : localizedFormat("Skyrim %@", version),
+                     localizedFormat("%ld of %ld mods", p.mods.filter(\.enabled).count, p.mods.count)]
+        if kit.hasOwnINIs(name) { parts.append(localized("own game settings")) }
+        if p.separateSaves { parts.append(localized("own saves")) }
+        if let c = kit.installedCollections().first(where: { $0.profile == name }) { parts.append(localizedFormat("collection “%@”", c.name)) }
+        if let d = kit.lastPlayed()[name] { parts.append(localizedFormat("played %@", d.formatted(.relative(presentation: .named)))) }
+        if instantSwitching && kit.parkedProfiles().contains(name) { parts.append(localized("instant switch ready")) }
         return parts.joined(separator: " · ")
     }
 
@@ -1607,13 +1613,13 @@ final class ModManagerModel: ObservableObject {
     /// Off discards every parked Data folder (only clones and the backups they own: nothing of the player's).
     func setInstantSwitching(_ on: Bool) {
         let k = kit
-        busy = on ? "Enabling instant switching…" : "Disabling instant switching…"
+        busy = on ? localized("Enabling instant switching…") : localized("Disabling instant switching…")
         Task.detached {
             do {
                 try k.setInstantSwitching(on)
                 await MainActor.run {
                     self.busy = nil; self.instantSwitching = on
-                    self.message = on ? "Instant switching enabled." : "Instant switching disabled."
+                    self.message = on ? localized("Instant switching enabled.") : localized("Instant switching disabled.")
                 }
             } catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.refreshInstantSwitching() } }
         }
@@ -1626,30 +1632,30 @@ final class ModManagerModel: ObservableObject {
     }
 
     func setSeparateSaves(_ name: String, _ on: Bool) {
-        guard !(name == profile && gameRunning()) else { message = "Quit Skyrim first."; return }
+        guard !(name == profile && gameRunning()) else { message = localized("Quit Skyrim first."); return }
         do {
             try kit.setSeparateSaves(name, on)
-            message = on ? "“\(name)” now keeps its own saves (Saves/SkyrimMT/\(name)). Saves made before stay in the shared folder."
-                         : "“\(name)” uses the shared Saves folder again."
+            message = on ? localizedFormat("“%@” now keeps its own saves (Saves/SkyrimMT/%@). Saves made before stay in the shared folder.", name, name)
+                         : localizedFormat("“%@” uses the shared Saves folder again.", name)
             reload()
         } catch { message = "\(error)" }
     }
 
     func renameProfile(_ name: String) {
-        let a = NSAlert(); a.messageText = "Rename “\(name)”"
+        let a = NSAlert(); a.messageText = localizedFormat("Rename “%@”", name)
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24)); field.stringValue = name
-        a.accessoryView = field; a.addButton(withTitle: "Rename"); a.addButton(withTitle: "Cancel")
+        a.accessoryView = field; a.addButton(withTitle: localized("Rename")); a.addButton(withTitle: localized("Cancel"))
         guard a.runModal() == .alertFirstButtonReturn, !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        do { try kit.renameProfile(name, to: field.stringValue); message = "Renamed to “\(ModKit.sanitize(field.stringValue))”."; reload(); reloadCollections() }
+        do { try kit.renameProfile(name, to: field.stringValue); message = localizedFormat("Renamed to “%@”.", ModKit.sanitize(field.stringValue)); reload(); reloadCollections() }
         catch { message = "\(error)" }
     }
 
     func restoreProfile(_ name: String, _ snap: ProfileSnapshot) {
-        guard !(name == profile && gameRunning()) else { message = "Quit Skyrim first."; return }
+        guard !(name == profile && gameRunning()) else { message = localized("Quit Skyrim first."); return }
         let k = kit
-        busy = "Restoring “\(name)”…"
+        busy = localizedFormat("Restoring “%@”…", name)
         Task.detached {
-            do { try k.restoreProfile(name, from: snap); await MainActor.run { self.busy = nil; self.message = "“\(name)” restored to \(snap.date.formatted(date: .abbreviated, time: .shortened))."; self.reload() } }
+            do { try k.restoreProfile(name, from: snap); await MainActor.run { self.busy = nil; self.message = localizedFormat("“%@” restored to %@.", name, snap.date.formatted(date: .abbreviated, time: .shortened)); self.reload() } }
             catch { await MainActor.run { self.busy = nil; self.message = "\(error)"; self.reload() } }
         }
     }
@@ -1657,7 +1663,7 @@ final class ModManagerModel: ObservableObject {
     func exportProfile(_ name: String) {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "\(name).skyrimmt-profile.json"
         guard panel.runModal() == .OK, let u = panel.url else { return }
-        do { try kit.exportProfile(name).write(to: u); message = "Exported “\(name)”." } catch { message = "\(error)" }
+        do { try kit.exportProfile(name).write(to: u); message = localizedFormat("Exported “%@”.", name) } catch { message = "\(error)" }
     }
 
     func importProfile() {
@@ -1665,38 +1671,38 @@ final class ModManagerModel: ObservableObject {
         guard panel.runModal() == .OK, let u = panel.url else { return }
         do {
             let missing = try kit.importProfile(Data(contentsOf: u))
-            message = missing.isEmpty ? "Profile imported." : "Profile imported — \(missing.count) mods aren't installed: \(missing.prefix(5).map(\.name).joined(separator: ", "))\(missing.count > 5 ? "…" : "")"
+            message = missing.isEmpty ? localized("Profile imported.") : localizedFormat("Profile imported. %ld mods aren’t installed: %@%@", missing.count, missing.prefix(5).map(\.name).joined(separator: ", "), missing.count > 5 ? "…" : "")
             reload()
         } catch { message = "\(error)" }
     }
 
     func deleteProfile(_ name: String) {
-        guard name != profile else { message = "Switch to another profile first — “\(name)” is active."; return }
+        guard name != profile else { message = localizedFormat("Switch to another profile first. “%@” is active.", name); return }
         let only = kit.modsOnlyIn(name)
-        let a = NSAlert(); a.messageText = "Delete profile “\(name)”?"
-        a.informativeText = "Deletes its mod list, load order and generated output. Saves are not affected."
-            + (kit.installedCollections().contains { $0.profile == name } ? " It came from a collection; the collection entry is removed too." : "")
-        let box = NSButton(checkboxWithTitle: "Also uninstall the \(only.count) mod\(only.count == 1 ? "" : "s") only this profile uses", target: nil, action: nil)
+        let a = NSAlert(); a.messageText = localizedFormat("Delete profile “%@”?", name)
+        a.informativeText = localized("Deletes its mod list, load order and generated output. Saves are not affected.")
+            + (kit.installedCollections().contains { $0.profile == name } ? " " + localized("It came from a collection; the collection entry is removed too.") : "")
+        let box = NSButton(checkboxWithTitle: only.count == 1 ? localizedFormat("Also uninstall the %ld mod only this profile uses", only.count) : localizedFormat("Also uninstall the %ld mods only this profile uses", only.count), target: nil, action: nil)
         box.state = .off
         if !only.isEmpty { a.accessoryView = box }
-        a.addButton(withTitle: "Delete"); a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: localized("Delete")); a.addButton(withTitle: localized("Cancel"))
         a.buttons.first?.hasDestructiveAction = true
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let removeMods = !only.isEmpty && box.state == .on
         do {
             try kit.deleteProfile(name, removeUnusedMods: removeMods)
-            message = "Profile “\(name)” deleted" + (removeMods ? " with \(only.count) mods." : ".")
+            message = removeMods ? localizedFormat("Profile “%@” deleted with %ld mods.", name, only.count) : localizedFormat("Profile “%@” deleted.", name)
             reload(); reloadCollections()
         } catch { message = "\(error)" }
     }
 
     func newProfile(clone: Bool) {
-        let a = NSAlert(); a.messageText = clone ? "Copy profile “\(profile)”" : "New empty profile"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24)); field.placeholderString = "Profile name"
-        a.accessoryView = field; a.addButton(withTitle: "Create"); a.addButton(withTitle: "Cancel")
+        let a = NSAlert(); a.messageText = clone ? localizedFormat("Copy profile “%@”", profile) : localized("New empty profile")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24)); field.placeholderString = localized("Profile name")
+        a.accessoryView = field; a.addButton(withTitle: localized("Create")); a.addButton(withTitle: localized("Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let name = ModKit.sanitize(field.stringValue)
-        do { try kit.createProfile(name, cloneFrom: clone ? profile : nil); message = "Profile \(name) created."; reload() }
+        do { try kit.createProfile(name, cloneFrom: clone ? profile : nil); message = localizedFormat("Profile %@ created.", name); reload() }
         catch { message = "\(error)" }
     }
 }
@@ -1719,7 +1725,11 @@ struct ModManagerView: View {
                 ForEach(model.sidebarOrder) { s in
                     let on = (model.section ?? .mods) == s
                     Button { model.section = s } label: {
-                        Label(s.rawValue, systemImage: s.icon)
+                        Label {
+                            Text(localized(s.rawValue))
+                        } icon: {
+                            Image(systemName: s.icon)
+                        }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(on ? Color.accentColor.opacity(0.25) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
@@ -1835,7 +1845,7 @@ struct ModManagerView: View {
             HStack {
                 Text("Nexus Mods").font(.headline)
                 Spacer()
-                if let u = model.nexusUser { Text("\(u.name)\(u.premium ? " · Premium" : "")").foregroundStyle(.secondary) }
+                if let u = model.nexusUser { Text(u.premium ? localizedFormat("%@ · Premium", u.name) : u.name).foregroundStyle(.secondary) }
             }
             if model.nexusKeyStored {
                 HStack {
@@ -1854,7 +1864,9 @@ struct ModManagerView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Text(model.isNxmHandler ? "“Mod Manager Download” links open in SkyrimMT." : "“Mod Manager Download” links open in: \(model.nxmHandler.isEmpty ? "nothing yet" : model.nxmHandler)")
+                Text(model.isNxmHandler
+                     ? localized("“Mod Manager Download” links open in SkyrimMT.")
+                     : localizedFormat("“Mod Manager Download” links open in: %@", model.nxmHandler.isEmpty ? localized("nothing yet") : model.nxmHandler))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if !model.isNxmHandler { Button("Use SkyrimMT for these links…") { model.becomeNxmHandler() } }
@@ -1877,7 +1889,7 @@ struct ModManagerView: View {
             if model.wjCacheSize > 0 {
                 HStack {
                     Image(systemName: "shippingbox.and.arrow.backward").foregroundStyle(.secondary)
-                    Text("Wabbajack download cache: \(ByteCountFormatter.string(fromByteCount: model.wjCacheSize, countStyle: .file)) — kept so list updates only download what changed.")
+                    Text(localizedFormat("Wabbajack download cache: %@ — kept so list updates only download what changed.", ByteCountFormatter.string(fromByteCount: model.wjCacheSize, countStyle: .file)))
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Delete…") { model.clearWabbajackCache() }.controlSize(.small).disabled(model.wjRunning != nil)
@@ -1919,10 +1931,10 @@ struct ModManagerView: View {
             .onDeleteCommand { model.deleteDownloads(model.dlSelection) }
             .overlay { if all.isEmpty { Text("No downloads. Nexus downloads appear here; archives can also be dropped on this window.").foregroundStyle(.secondary).padding() } }
             HStack {
-                Text("\(all.count) archives · \(fmt(all.reduce(Int64(0)) { $0 + $1.size }))").font(.caption).foregroundStyle(.secondary)
+                Text(localizedFormat("%ld archives · %@", all.count, fmt(all.reduce(Int64(0)) { $0 + $1.size }))).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if !model.dlSelection.isEmpty { Button("Delete \(model.dlSelection.count) selected…") { model.deleteDownloads(model.dlSelection) } }
-                Button("Delete installed archives (\(fmt(installedBytes)))…") { model.deleteDownloads(Set(all.filter { $0.installedModID != nil }.map(\.id))) }
+                if !model.dlSelection.isEmpty { Button(localizedFormat("Delete %ld selected…", model.dlSelection.count)) { model.deleteDownloads(model.dlSelection) } }
+                Button(localizedFormat("Delete installed archives (%@)…", fmt(installedBytes))) { model.deleteDownloads(Set(all.filter { $0.installedModID != nil }.map(\.id))) }
                     .disabled(installedBytes == 0)
                     .help("Installed mods are not affected. The archive is only needed to reinstall.")
             }.padding(10)
@@ -1939,22 +1951,24 @@ struct ModManagerView: View {
             if let info = model.colInfo {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(info.name).font(.title3.bold())
-                    Text("Revision \(info.revision) · \(info.files.count) mods · \(ByteCountFormatter.string(fromByteCount: info.totalSize, countStyle: .file))"
-                         + (info.gameVersions.isEmpty ? "" : " · for Skyrim \(info.gameVersions.joined(separator: ", "))"))
+                    let revisionSummary = localizedFormat("Revision %ld · %ld mods · %@", info.revision, info.files.count, ByteCountFormatter.string(fromByteCount: info.totalSize, countStyle: .file))
+                    Text(info.gameVersions.isEmpty
+                         ? revisionSummary
+                         : revisionSummary + localizedFormat(" · for Skyrim %@", info.gameVersions.joined(separator: ", ")))
                         .foregroundStyle(.secondary)
                     if model.gameVersionMismatch {
-                        Label("Made for a different game version (yours: \(model.gameVersion())). Some SKSE plugins may not load.", systemImage: "exclamationmark.triangle.fill")
+                        Label(localizedFormat("Made for a different game version (yours: %@). Some SKSE plugins may not load.", model.gameVersion()), systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                     }
-                    Text("Installs into a new profile, “\(ModKit.sanitize(info.name))”. Other profiles are not changed.").font(.caption).foregroundStyle(.secondary)
+                    Text(localizedFormat("Installs into a new profile, “%@”. Other profiles are not changed.", ModKit.sanitize(info.name))).font(.caption).foregroundStyle(.secondary)
                 }
                 if let w = model.colWaiting {
                     HStack(spacing: 10) {
                         Image(systemName: "hand.point.up.left.fill").foregroundStyle(.blue)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Click “Slow download” for \(w.name)").fontWeight(.medium)
+                            Text(localizedFormat("Click “Slow download” for %@", w.name)).fontWeight(.medium)
                             let done = model.colStates.filter { if case .done = $0 { return true }; if case .reused = $0 { return true }; return false }.count
-                            Text("Nexus page opened in your browser · \(done) of \(model.colItems.count) mods ready").font(.caption).foregroundStyle(.secondary)
+                            Text(localizedFormat("Nexus page opened in your browser · %ld of %ld mods ready", done, model.colItems.count)).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button("Open page again") { model.openFilePage(w) }
@@ -2003,11 +2017,13 @@ struct ModManagerView: View {
                 Text("Installed collections").font(.headline)
                 ForEach(model.colInstalled, id: \.slug) { c in
                     HStack {
-                        Text(c.name); Text("rev \(c.revision) · profile “\(c.profile)”" + (c.gameVersion.map { " · Skyrim \($0)" } ?? "")).foregroundStyle(.secondary)
-                        if let f = c.failed, !f.isEmpty { Label("\(f.count) failed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).help(f.joined(separator: "\n")) }
+                        Text(c.name)
+                        Text(c.gameVersion.map { localizedFormat("rev %ld · profile “%@” · Skyrim %@", c.revision, c.profile, $0) }
+                             ?? localizedFormat("rev %ld · profile “%@”", c.revision, c.profile)).foregroundStyle(.secondary)
+                        if let f = c.failed, !f.isEmpty { Label(localizedFormat("%ld failed", f.count), systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).help(f.joined(separator: "\n")) }
                         Spacer()
                         if let l = model.colLatest[c.slug] {
-                            Label("Revision \(l.revision): \(model.kit.collectionDiff(slug: c.slug, latest: l).summary)", systemImage: "arrow.up.circle.fill")
+                            Label(localizedFormat("Revision %ld: %@", l.revision, model.kit.collectionDiff(slug: c.slug, latest: l).summary), systemImage: "arrow.up.circle.fill")
                                 .foregroundStyle(.green).help(model.collectionDiffText(c, l))
                             Button("Update") { model.updateCollection(c) }.disabled(model.colRunning || model.busy != nil)
                                 .help("Installs revision \(l.revision) into the same profile. Mods you added yourself are kept.")
@@ -2053,7 +2069,7 @@ struct ModManagerView: View {
             }
             let missing = model.missingEssentials.count
             HStack {
-                Button(missing == 0 ? "All installed" : "Install all (\(missing))") { model.installEssentials() }
+                Button(missing == 0 ? "All installed" : localizedFormat("Install all (%ld)", missing)) { model.installEssentials() }
                     .buttonStyle(.borderedProminent).disabled(missing == 0 || model.busy != nil || !model.nexusKeyStored)
                 if model.busy != nil && !model.nxmWaiters.isEmpty { Button("Stop") { model.skipWaiting(stopAll: true) } }
                 Spacer()
@@ -2089,7 +2105,7 @@ struct ModManagerView: View {
                         Text(model.hasLoot ? "Sorts the load order with the LOOT masterlist and your own rules. Messages appear on the Plugins page."
                                            : "Not included in this build.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        if !model.lootRules.isEmpty { Text("\(model.lootRules.count) custom rule\(model.lootRules.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary) }
+                        if !model.lootRules.isEmpty { Text(localizedFormat(model.lootRules.count == 1 ? "%ld custom rule" : "%ld custom rules", model.lootRules.count)).font(.caption).foregroundStyle(.secondary) }
                     }
                     Spacer()
                     if model.hasLoot {
@@ -2113,7 +2129,7 @@ struct ModManagerView: View {
                              ? "Builds animation behaviours for Nemesis, Pandora and FNIS mods. Patches whose mod isn't installed stay off."
                              : "Not installed in this build.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        if let r = model.pandoraLastRun { Text("Last run: \(r)").font(.caption).foregroundStyle(.secondary) }
+                        if let r = model.pandoraLastRun { Text(localizedFormat("Last run: %@", r)).font(.caption).foregroundStyle(.secondary) }
                         if model.pandoraInstalled {
                             Toggle("Run automatically when animation mods change", isOn: Binding(get: { model.kit.autoPandora }, set: { model.setAutoGenerate(pandora: $0) }))
                                 .toggleStyle(.checkbox).font(.caption)
@@ -2151,7 +2167,7 @@ struct ModManagerView: View {
                 HStack {
                     Text("Found in your mods:").font(.caption).foregroundStyle(.secondary)
                     ForEach(fresh, id: \.key) { name, url in
-                        Button("Add \(name)") { model.addDetectedTool(name, url) }.controlSize(.small)
+                        Button(localizedFormat("Add %@", name)) { model.addDetectedTool(name, url) }.controlSize(.small)
                     }
                     Spacer()
                 }
@@ -2179,7 +2195,7 @@ struct ModManagerView: View {
                              ? "Builds bodies and outfits for your body mod."
                              : "Not installed in this build.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        if let r = model.bodySlideLastRun { Text("Last run: \(r)").font(.caption).foregroundStyle(.secondary) }
+                        if let r = model.bodySlideLastRun { Text(localizedFormat("Last run: %@", r)).font(.caption).foregroundStyle(.secondary) }
                         if model.bodySlideInstalled {
                             Toggle("Run automatically when body or outfit mods change", isOn: Binding(get: { model.kit.autoBodySlide }, set: { model.setAutoGenerate(bodySlide: $0) }))
                                 .toggleStyle(.checkbox).font(.caption)
@@ -2206,9 +2222,9 @@ struct ModManagerView: View {
                         let family = st.family ?? scan.detectedFamily
                         HStack(spacing: 16) {
                             Picker("Body", selection: Binding(get: { st.family ?? "" }, set: { v in var n = st; n.family = v.isEmpty ? nil : v; model.setBodySlide(n) })) {
-                                Text(scan.detectedFamily.map { "Automatic (\(BodySlide.familyNames[$0] ?? $0))" } ?? "Automatic (none found)").tag("")
+                                Text(scan.detectedFamily.map { localizedFormat("Automatic (%@)", BodySlide.familyNames[$0] ?? $0) } ?? localized("Automatic (none found)")).tag("")
                                 ForEach(BodySlide.familyOrder.filter { scan.familyCounts[$0] != nil || scan.detectedFamily == $0 }, id: \.self) { f in
-                                    Text("\(BodySlide.familyNames[f] ?? f) · \(scan.familyCounts[f] ?? 0) outfits").tag(f)
+                                    Text(localizedFormat("%@ · %ld outfits", BodySlide.familyNames[f] ?? f, scan.familyCounts[f] ?? 0)).tag(f)
                                 }
                             }
                             .frame(maxWidth: 330)
@@ -2236,7 +2252,7 @@ struct ModManagerView: View {
             if let running = model.wjRunning {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Installing \(running)…").font(.headline)
+                        Text(localizedFormat("Installing %@…", running)).font(.headline)
                         if let f = model.wjFraction { ProgressView(value: f) } else { ProgressView().progressViewStyle(.linear) }
                         HStack {
                             Text(model.wjStatus).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -2251,7 +2267,7 @@ struct ModManagerView: View {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.title2)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Installing \(f.title) stopped").font(.headline)
+                            Text(localizedFormat("Installing %@ stopped", f.title)).font(.headline)
                             Text(f.plainReason).font(.callout).fixedSize(horizontal: false, vertical: true)
                             Text("Your game and profiles are unchanged. Downloads are kept, and Retry resumes.")
                                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -2279,7 +2295,7 @@ struct ModManagerView: View {
                             Text(e.title).fontWeight(.medium)
                             if e.nsfw { Text("NSFW").font(.caption2.bold()).foregroundStyle(.orange) }
                         }
-                        Text("\(e.author) · \(e.version) · \(ByteCountFormatter.string(fromByteCount: e.downloadSize, countStyle: .file)) download, \(ByteCountFormatter.string(fromByteCount: e.installSize, countStyle: .file)) installed · \(e.archives) archives")
+                        Text(localizedFormat("%@ · %@ · %@ download, %@ installed · %ld archives", e.author, e.version, ByteCountFormatter.string(fromByteCount: e.downloadSize, countStyle: .file), ByteCountFormatter.string(fromByteCount: e.installSize, countStyle: .file), e.archives))
                             .font(.caption).foregroundStyle(.secondary)
                         if !e.description.isEmpty { Text(e.description).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                     }
@@ -2287,7 +2303,7 @@ struct ModManagerView: View {
                     if let r = e.readme, let u = URL(string: r) { Button("Readme") { NSWorkspace.shared.open(u) } }
                     if let i = model.wjInstalled2.first(where: { $0.machineURL == e.machineURL }) {
                         if i.version.compare(e.version, options: .numeric) == .orderedAscending {
-                            Button("Update to \(e.version)…") { model.installWabbajack(e) }.disabled(model.wjRunning != nil).buttonStyle(.borderedProminent)
+                            Button(localizedFormat("Update to %@…", e.version)) { model.installWabbajack(e) }.disabled(model.wjRunning != nil).buttonStyle(.borderedProminent)
                                 .help("Installed: \(i.version) (profile “\(i.profile)”). Existing downloads and your added mods are kept.")
                         } else {
                             Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.callout).help("Version \(i.version) · profile “\(i.profile)”")
@@ -2343,12 +2359,12 @@ struct ModManagerView: View {
                 }
                 .padding(.vertical, 2)
                 .contextMenu {
-                    if p != model.profile { Button("Switch to “\(p)”") { model.switchProfile(p) } }
+                    if p != model.profile { Button(localizedFormat("Switch to “%@”", p)) { model.switchProfile(p) } }
                     Button("Rename…") { model.renameProfile(p) }
                     Button("History…") { model.historyFor = p }
                     Button("Export…") { model.exportProfile(p) }
                     Divider()
-                    Button("Delete “\(p)”…") { model.deleteProfile(p) }.disabled(p == model.profile)
+                    Button(localizedFormat("Delete “%@”…", p)) { model.deleteProfile(p) }.disabled(p == model.profile)
                 }
             }
             HStack(alignment: .firstTextBaseline) {
@@ -2382,14 +2398,15 @@ struct ProfileHistoryView: View {
     var body: some View {
         let snaps = model.kit.profileHistory(name)
         VStack(alignment: .leading, spacing: 10) {
-            Text("History of “\(name)”").font(.title3.bold())
+            Text(localizedFormat("History of “%@”", name)).font(.title3.bold())
             Text("Every change is listed here. Restoring a version keeps the current one in the list.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             List(snaps) { s in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(s.date.formatted(date: .abbreviated, time: .standard))
-                        Text("\(s.enabledMods) of \(s.mods) mods enabled · \(s.activePlugins) of \(s.plugins) plugins active\(s.gameVersion.map { " · Skyrim \($0)" } ?? "")")
+                        let status = localizedFormat("%ld of %ld mods enabled · %ld of %ld plugins active", s.enabledMods, s.mods, s.activePlugins, s.plugins)
+                        Text(s.gameVersion.map { status + localizedFormat(" · Skyrim %@", $0) } ?? status)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -2412,9 +2429,9 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField(prompt, text: $text).textFieldStyle(.plain)
+            TextField(localized(prompt), text: $text).textFieldStyle(.plain)
             if !text.isEmpty {
-                Text("\(count) of \(total)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text(localizedFormat("%ld of %ld", count, total)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.accessibilityLabel("Clear search")
                     .buttonStyle(.plain).help("Clear search")
             }
@@ -2444,7 +2461,7 @@ struct FomodWizardView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text(state.name).font(.title3.bold())
-                    Text("\(step.name)  ·  step \(state.position + 1) of \(state.steps.count)").foregroundStyle(.secondary)
+                    Text(localizedFormat("%@ · step %ld of %ld", step.name, state.position + 1, state.steps.count)).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -2547,15 +2564,15 @@ struct WabbajackFailure {
     let error: String, step: String, log: URL
     var plainReason: String {
         let e = error.lowercased(), st = step.lowercased()
-        if e.contains("api key") || e.contains("oauth") || e.contains("401") { return "Nexus Mods didn't accept your API key. Check it on the Downloads page, then Retry." }
-        if e.contains("premium") { return "Nexus only allows automatic downloads for Premium accounts." }
-        if e.contains("no space") || e.contains("disk full") || e.contains("not enough space") { return "The disk ran out of space. Free some space, then Retry." }
-        if e.contains("timed out") || e.contains("network") || e.contains("connection") { return "The connection dropped while downloading. Retry continues the downloads." }
-        if e.contains("hash") || e.contains("checksum") { return "A downloaded file didn't match what the list expects (it may have changed on Nexus). Retry downloads it again; if it keeps failing, the list needs an update from its author." }
-        if st.contains("download") { return "It stopped while downloading (\(step.prefix(60)))." }
-        if st.contains("hash") { return "It stopped while checking the downloaded files." }
-        if st.contains("install") || st.contains("extract") { return "It stopped while building the list." }
-        return "It stopped at: \(step.isEmpty ? "the start" : String(step.prefix(80)))."
+        if e.contains("api key") || e.contains("oauth") || e.contains("401") { return localized("Nexus Mods didn't accept your API key. Check it on the Downloads page, then Retry.") }
+        if e.contains("premium") { return localized("Nexus only allows automatic downloads for Premium accounts.") }
+        if e.contains("no space") || e.contains("disk full") || e.contains("not enough space") { return localized("The disk ran out of space. Free some space, then Retry.") }
+        if e.contains("timed out") || e.contains("network") || e.contains("connection") { return localized("The connection dropped while downloading. Retry continues the downloads.") }
+        if e.contains("hash") || e.contains("checksum") { return localized("A downloaded file didn't match what the list expects (it may have changed on Nexus). Retry downloads it again; if it keeps failing, the list needs an update from its author.") }
+        if st.contains("download") { return localizedFormat("It stopped while downloading (%@).", String(step.prefix(60))) }
+        if st.contains("hash") { return localized("It stopped while checking the downloaded files.") }
+        if st.contains("install") || st.contains("extract") { return localized("It stopped while building the list.") }
+        return localizedFormat("It stopped at: %@.", step.isEmpty ? localized("the start") : String(step.prefix(80)))
     }
 }
 

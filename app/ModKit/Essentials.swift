@@ -13,7 +13,17 @@ public struct Essential: Identifiable, Equatable {
     public let marker: String
     /// The note for the selected game version: the 1.7.104 facts were checked for 1.7.104 only (docs/m1-sources.md),
     /// other versions get version-neutral advice instead of a wrong build number.
-    public func note(for gameVersion: String) -> String {
+    /// The GOG build (its own version numbers, e.g. 1.6.1179) needs the GOG files of SKSE and Address Library.
+    public func note(for gameVersion: String, gog: Bool = false) -> String {
+        if gog {
+            switch id {
+            case "skse": return "The GOG build of SKSE" + (gameVersion.isEmpty ? "." : " for game \(gameVersion).")
+            case "addresslib": return "The file for the GOG version" + (gameVersion.isEmpty ? "." : " (\(gameVersion)).")
+            case "enginefixes", "displaytweaks": return "Choose a build that supports the GOG version \(gameVersion) on Nexus."
+            case "crashlogger": return "Logs go to My Games/Skyrim Special Edition GOG/SKSE."
+            default: return note
+            }
+        }
         if gameVersion.isEmpty || gameVersion.hasPrefix("1.7.") { return note }
         switch id {
         case "skse": return "Choose the build for game \(gameVersion) on Nexus."
@@ -43,7 +53,20 @@ public let essentials: [Essential] = [
 extension ModKit {
     /// The Nexus files to install for an essential on this game version (file names as published, checked through
     /// the public API on 2026-10-19). Empty: no confident choice (other game versions) — the player picks on Nexus.
-    public static func essentialFiles(_ e: Essential, from files: [NexusFileInfo], gameVersion: String) -> [NexusFileInfo] {
+    /// GOG: SKSE and Address Library publish separate GOG files ("… GOG …", main or optional); version-independent
+    /// essentials (Crash Logger, SkyUI) take their primary file; engine plugins are the player's pick.
+    public static func essentialFiles(_ e: Essential, from files: [NexusFileInfo], gameVersion: String, gog: Bool = false) -> [NexusFileInfo] {
+        if gog {
+            let current = files.filter { !["OLD_VERSION", "ARCHIVED", "DELETED", "REMOVED"].contains($0.category.uppercased()) }
+                .sorted { $0.uploadedTimestamp > $1.uploadedTimestamp }
+            switch e.id {
+            case "skse", "addresslib": return current.first { $0.name.lowercased().contains("gog") }.map { [$0] } ?? []
+            case "crashlogger", "skyui":
+                let main = current.filter { $0.category.uppercased() == "MAIN" }
+                return (main.first(where: \.isPrimary) ?? main.first).map { [$0] } ?? []
+            default: return []
+            }
+        }
         guard gameVersion.isEmpty || gameVersion.hasPrefix("1.7.") else { return [] }
         let main = files.filter { $0.category.uppercased() == "MAIN" }.sorted { $0.uploadedTimestamp > $1.uploadedTimestamp }
         func newest(_ needle: String) -> NexusFileInfo? { main.first { $0.name.lowercased().contains(needle.lowercased()) } }

@@ -1,5 +1,6 @@
 #!/bin/bash
-# One-click launch (launcher Play): Steam if needed (waits for login), then Skyrim (scripts/skyrim.sh).
+# One-click launch (launcher Play): Steam if needed (waits for login; not for the GOG version), then Skyrim
+# (scripts/skyrim.sh).
 . "$(dirname "$0")/_env.sh"
 notify() { osascript -e "display notification \"$1\" with title \"Skyrim\"" >/dev/null 2>&1; }
 if game_running; then notify "Skyrim is already running."; exit 0; fi
@@ -12,5 +13,5 @@ echo $$ > "$RUN/launch-pending"; trap 'rm -f "$RUN/launch-pending"' EXIT   # tel
 if [ -n "$(other_steam_pids)" ]; then
   notify "tf2mt's Steam is running with the same account — close it first."; echo "tf2mt's Steam is running"; exit 1
 fi
-if ! steam_running; then notify "Starting Steam…"; fi
+if ! is_gog && ! steam_running; then notify "Starting Steam…"; fi
 "$SKYRIMMT_ROOT/scripts/skyrim.sh" "$@" || { notify "Skyrim did not start — see $SKYRIM_HOME/logs/skyrim.log"; exit 1; }

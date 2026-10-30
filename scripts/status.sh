@@ -21,5 +21,6 @@ if [ $steam = 1 ]; then
 fi
 echo "steam=$steam online=$online"
 echo "other_steam=$([ -n "$(pick steam.exe "$theirs")" ] && echo 1 || echo 0)"
+echo "store=$SKYRIM_STORE"
 echo "keizaal=$([ -n "$(pick keizaal-online.exe "$ours")" ] && echo 1 || echo 0)"   # Keizaal Online's launcher
 echo "deploy_lock=$([ -d "$SKYRIM_HOME/run/deploy.lock" ] && echo 1 || echo 0)"

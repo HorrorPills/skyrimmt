@@ -127,9 +127,9 @@ extension ModKit {
         return nil
     }
 
-    /// A ModKit for another game folder of this home (Steam's or a pinned version) — e.g. to build its vanilla view.
+    /// A ModKit for another game folder of this home (the store's install or a pinned version) — e.g. to build its vanilla view.
     public func kit(forVersionKey key: String) -> ModKit {
-        key == "steam" ? ModKit(home: home, gameDir: ModKit.steamGameDir(home), pluginsTxt: pluginsTxt)
+        key == "steam" ? ModKit(home: home, gameDir: ModKit.baseGameDir(home), pluginsTxt: pluginsTxt)
                        : ModKit(home: home, gameDir: home.appendingPathComponent("versions/\(key)"), pluginsTxt: pluginsTxt, versionKey: key)
     }
 

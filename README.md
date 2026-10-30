@@ -41,7 +41,7 @@ Skyrim Special Edition / Anniversary Edition on Apple Silicon Macs — one-click
 
 ## Requirements
 - Apple Silicon, macOS 13 or newer
-- Skyrim Special Edition on Steam
+- Skyrim Special Edition / Anniversary Edition on Steam, or on GOG (the offline installers from your GOG library)
 - ~25 GB free disk space
 - Nexus Mods account (Premium for fully automatic downloads)
 
@@ -49,6 +49,9 @@ Skyrim Special Edition / Anniversary Edition on Apple Silicon Macs — one-click
 1. Download `SkyrimMT-app.zip` from [Releases](../../releases) and move SkyrimMT to Applications.
 2. First launch: right-click → **Open** (the app is not notarized).
 3. Setup tab → **Set up everything**, sign in to Steam, confirm the Skyrim install.
+   GOG version: choose **Skyrim from: GOG** first; Set up everything then asks for the folder with your GOG installers
+   (`setup_the_elder_scrolls_v_skyrim_special_edition_….exe` + `.bin` files, and the Anniversary Upgrade's). No Steam
+   is installed. Version pinning and Wabbajack lists are Steam-only; essentials use the GOG builds of SKSE and Address Library.
 4. Mod Manager → Essentials → add your Nexus API key → **Install all**.
 
 ## Legal

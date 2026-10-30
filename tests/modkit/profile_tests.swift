@@ -382,6 +382,33 @@ func essentialFilesTests() {
     check(ModKit.essentialFiles(e["skyui"]!, from: ui, gameVersion: "1.7.104").map(\.fileID) == [749043], "SkyUI: main file, not the SDK")
     check(ModKit.essentialFiles(e["skse"]!, from: skse, gameVersion: "1.6.640").isEmpty, "other game versions: no automatic choice")
     check(ModKit.essentialFiles(e["enginefixes"]!, from: [f(725261, "Engine Fixes - SKSE64 Preloader", "MAIN", 3)], gameVersion: "1.7.104").isEmpty, "incomplete set → none (no half installs)")
+    // the GOG build (1.6.1179): GOG files of SKSE / Address Library, version-independent mods as usual, engine plugins by hand
+    let skseGOG = skse + [f(400001, "Anniversary Edition GOG build 2.2.5", "OLD_VERSION", 3)]
+    check(ModKit.essentialFiles(e["skse"]!, from: skseGOG, gameVersion: "1.6.1179", gog: true).map(\.fileID) == [470991], "GOG: SKSE's GOG build, not Steam's or an old one")
+    check(ModKit.essentialFiles(e["addresslib"]!, from: addr, gameVersion: "1.6.1179", gog: true).isEmpty, "GOG: no GOG Address Library file → player's pick")
+    check(ModKit.essentialFiles(e["addresslib"]!, from: addr + [f(500001, "All in one (GOG 1.6.1179)", "OPTIONAL", 2)], gameVersion: "1.6.1179", gog: true).map(\.fileID) == [500001], "GOG: Address Library's GOG file")
+    check(ModKit.essentialFiles(e["skyui"]!, from: ui, gameVersion: "1.6.1179", gog: true).map(\.fileID) == [749043], "GOG: SkyUI main file")
+    check(ModKit.essentialFiles(e["enginefixes"]!, from: ef, gameVersion: "1.6.1179", gog: true).isEmpty, "GOG: Engine Fixes is the player's pick")
+    check(e["skse"]!.note(for: "1.6.1179", gog: true).contains("GOG"), "GOG: SKSE note names the GOG build")
+}
+
+func gogLayoutTests() {
+    section("GOG store: game folder, plugins.txt and My Games under the GOG names")
+    let home = freshDir("gog-layout")
+    check(!ModKit.isGOG(home) && ModKit.baseGameDir(home) == ModKit.steamGameDir(home), "no config/store → Steam")
+    write(home.appendingPathComponent("config/game-version"), "1.5.97\n")
+    write(home.appendingPathComponent("versions/1.5.97/.skyrimmt-version"), "1.5.97")
+    check(ModKit.standard(home: home, user: "u").gameVersionKey == "1.5.97", "Steam: pinned version honoured")
+    write(home.appendingPathComponent("config/store"), "gog\n")
+    let k = ModKit.standard(home: home, user: "u")
+    check(k.isGOG && k.gameVersionKey == "steam", "GOG: the store's install, pinned versions ignored")
+    check(k.gameDir.path.hasSuffix("prefix/drive_c/GOG Games/Skyrim Anniversary Edition"), "GOG: game folder (\(k.gameDir.path))")
+    check(k.pluginsTxt.path.hasSuffix("users/u/AppData/Local/Skyrim Special Edition GOG/plugins.txt"), "GOG: plugins.txt folder")
+    check(k.myGamesDir.path.hasSuffix("users/u/Documents/My Games/Skyrim Special Edition GOG"), "GOG: My Games folder (\(k.myGamesDir.path))")
+    check(k.crashLogDir.path.hasSuffix("My Games/Skyrim Special Edition GOG/SKSE"), "GOG: Crash Logger folder")
+    check(k.kit(forVersionKey: "steam").gameDir == ModKit.gogGameDir(home), "GOG: the \"steam\" key is the GOG install")
+    let steam = ModKit(home: home, gameDir: home, pluginsTxt: fixturePluginsTxt(home))
+    check(steam.myGamesDir.path.hasSuffix("users/test/Documents/My Games/Skyrim Special Edition"), "Steam: My Games unchanged")
 }
 
 func toolPackageTests() {

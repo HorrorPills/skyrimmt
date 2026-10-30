@@ -7,10 +7,12 @@ import Foundation
 extension ModKit {
     static let iniNames = ["Skyrim.ini", "SkyrimPrefs.ini", "SkyrimCustom.ini"]
 
-    /// prefix/drive_c/users/<user>/Documents/My Games/Skyrim Special Edition (derived from plugins.txt's location)
+    /// prefix/drive_c/users/<user>/Documents/My Games/Skyrim Special Edition (derived from plugins.txt's location; the
+    /// folder has the same name as plugins.txt's — "Skyrim Special Edition GOG" for the GOG build)
     public var myGamesDir: URL {
-        pluginsTxt.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Documents/My Games/Skyrim Special Edition")
+        let folder = pluginsTxt.deletingLastPathComponent()
+        return folder.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Documents/My Games").appendingPathComponent(folder.lastPathComponent)
     }
     public func profileINIDir(_ name: String) -> URL { profilesDir.appendingPathComponent("\(name)/ini") }
     var sharedINIDir: URL { stateDir.appendingPathComponent("shared-ini") }

@@ -9,20 +9,29 @@ export WINE="$SKYRIM_HOME/wine/bin/wine"
 export WINESERVER="$SKYRIM_HOME/wine/bin/wineserver"
 export STEAM_DIR="$WINEPREFIX/drive_c/Program Files (x86)/Steam"
 export STEAM_GAMEDIR="$STEAM_DIR/steamapps/common/Skyrim Special Edition"   # Steam's install (kept as Steam updates it)
-# The game folder Play uses: Steam's install, or a pinned version from the version switcher (scripts/versions.sh).
-# An explicit GAMEDIR from the caller wins (tools that inspect a specific folder).
+# Where this game environment's Skyrim comes from (config/store): "steam" (default; Steam for Windows in the prefix)
+# or "gog" (the player's own GOG offline installers, scripts/install-gog.sh; no Steam at all). Read from the file on
+# every source, never inherited: one SKYRIM_HOME has one store.
+SKYRIM_STORE=$(tr -d '[:space:]' 2>/dev/null < "$SKYRIM_HOME/config/store"); [ "$SKYRIM_STORE" = gog ] || SKYRIM_STORE=steam
+export SKYRIM_STORE
+export GOG_GAMEDIR="$WINEPREFIX/drive_c/GOG Games/Skyrim Anniversary Edition"   # install-gog.sh installs here
+if [ "$SKYRIM_STORE" = gog ]; then export BASE_GAMEDIR="$GOG_GAMEDIR"; else export BASE_GAMEDIR="$STEAM_GAMEDIR"; fi
+is_gog() { [ "$SKYRIM_STORE" = gog ]; }
+# The game folder Play uses: the store's install, or a pinned version from the version switcher (scripts/versions.sh;
+# Steam only). An explicit GAMEDIR from the caller wins (tools that inspect a specific folder).
 _skmt_v=$(cat "$SKYRIM_HOME/config/game-version" 2>/dev/null)
 if [ -z "${GAMEDIR:-}" ]; then
-  if [ -n "$_skmt_v" ] && [ -f "$SKYRIM_HOME/versions/$_skmt_v/.skyrimmt-version" ]; then export GAMEDIR="$SKYRIM_HOME/versions/$_skmt_v"
-  else export GAMEDIR="$STEAM_GAMEDIR"; fi
+  if ! is_gog && [ -n "$_skmt_v" ] && [ -f "$SKYRIM_HOME/versions/$_skmt_v/.skyrimmt-version" ]; then export GAMEDIR="$SKYRIM_HOME/versions/$_skmt_v"
+  else export GAMEDIR="$BASE_GAMEDIR"; fi
 fi
 unset _skmt_v
 export SKYRIM_APPID=489830
-# per-user game folders inside the prefix (the prefix user is the Mac user name)
-_skmt_user="$WINEPREFIX/drive_c/users/${USER:-$(id -un)}"
-export MYGAMES_DIR="$_skmt_user/Documents/My Games/Skyrim Special Edition"   # Skyrim*.ini, Saves/
-export LOCALAPPDATA_DIR="$_skmt_user/AppData/Local/Skyrim Special Edition"    # plugins.txt
-unset _skmt_user
+# per-user game folders inside the prefix (the prefix user is the Mac user name). The GOG build uses its own names
+# ("Skyrim Special Edition GOG") for both.
+_skmt_user="$WINEPREFIX/drive_c/users/${USER:-$(id -un)}"; _skmt_n="Skyrim Special Edition"; is_gog && _skmt_n="$_skmt_n GOG"
+export MYGAMES_DIR="$_skmt_user/Documents/My Games/$_skmt_n"   # Skyrim*.ini, Saves/
+export LOCALAPPDATA_DIR="$_skmt_user/AppData/Local/$_skmt_n"    # plugins.txt
+unset _skmt_user _skmt_n
 export DYLD_FALLBACK_LIBRARY_PATH="$SKYRIM_HOME/wine/lib:/usr/lib"   # FreeType etc. (lost if launched via SIP binaries like nohup)
 export WINEDEBUG="${WINEDEBUG:--all}"
 export MVK_CONFIG_LOG_LEVEL="${MVK_CONFIG_LOG_LEVEL:-0}"
@@ -54,11 +63,12 @@ server_up()     { pgrep -f "$SKYRIM_HOME/wine/.*wineserver" >/dev/null; }
 # tf2mt's Steam (same Steam account → "playing on another device" conflicts, PLAN §4.2). Never kill it from here:
 # the launcher offers to close that session through tf2mt's own scripts/session-end.sh.
 TF2MT_NTDLL="${TF2_HOME:-$HOME/Games/tf2}/wine/lib/wine/x86_64-unix/ntdll.so"
-other_steam_pids() { [ -f "$TF2MT_NTDLL" ] && win_pids 'steam\.exe' "$TF2MT_NTDLL"; }
+other_steam_pids() { is_gog && return 0; [ -f "$TF2MT_NTDLL" ] && win_pids 'steam\.exe' "$TF2MT_NTDLL"; }   # GOG: no Steam, no conflict
 
 # Start Steam if needed and wait for a NEW "Logged On" line (old lines from earlier sessions don't count). The game
 # must not start before Steam has logged on (tf2mt: crash during load).
 ensure_steam() {
+  is_gog && return 0   # the GOG build starts without any client
   steam_running && return 0
   local n; n=$(wc -l < "$STEAM_DIR/logs/connection_log.txt" 2>/dev/null | tr -d ' '); n=${n:-0}
   "$SKYRIMMT_ROOT/scripts/steam.sh" >/dev/null

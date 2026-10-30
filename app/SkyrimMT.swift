@@ -40,12 +40,18 @@ enum Paths {
     static var prefix: String { game + "/prefix" }
     static var steamDir: String { prefix + "/drive_c/Program Files (x86)/Steam" }
     static var steamExe: String { steamDir + "/steam.exe" }
-    static var skyrimDir: String { steamDir + "/steamapps/common/Skyrim Special Edition" }
+    /// Where this game environment's Skyrim comes from (config/store, scripts/_env.sh): Steam (default) or the player's
+    /// own GOG offline installers (scripts/install-gog.sh). The GOG build runs without any client.
+    static var isGOG: Bool {
+        (try? String(contentsOfFile: game + "/config/store", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) == "gog"
+    }
+    static var gogDir: String { prefix + "/drive_c/GOG Games/Skyrim Anniversary Edition" }
+    static var skyrimDir: String { isGOG ? gogDir : steamDir + "/steamapps/common/Skyrim Special Edition" }
     static var skyrimManifest: String { steamDir + "/steamapps/appmanifest_489830.acf" }
     static var art: String { steamDir + "/appcache/librarycache/489830" }
     static var connectionLog: String { steamDir + "/logs/connection_log.txt" }
     static var userDir: String { prefix + "/drive_c/users/" + NSUserName() }
-    static var myGames: String { userDir + "/Documents/My Games/Skyrim Special Edition" }
+    static var myGames: String { userDir + "/Documents/My Games/Skyrim Special Edition" + (isGOG ? " GOG" : "") }
     static var mods: String { game + "/mods" }
     /// Keizaal Online's launcher (Electron, installed per Windows user in the prefix): scripts/keizaal.sh
     static var keizaalExe: String { userDir + "/AppData/Local/Programs/skyrim-rp-launcher/keizaal-online.exe" }
@@ -230,6 +236,8 @@ final class Launcher: ObservableObject {
     @Published var setupRunning = false
     @Published var setupLog: [String] = []
     @Published var artVersion = 0
+    @Published var isGOG = Paths.isGOG          // config/store = gog (Setup → "Skyrim from")
+    @Published var gogProgress: Int?            // install-gog.sh running: percent
 
     private var timer: Timer?
     private var ticks = 0
@@ -239,6 +247,7 @@ final class Launcher: ObservableObject {
     var setupComplete: Bool { !checks.isEmpty && checks.allSatisfy(\.ok) }
     var everLoggedIn: Bool { ((try? String(contentsOfFile: Paths.connectionLog, encoding: .utf8)) ?? "").contains("Logged On") }
     var skyrimInstalled: Bool {
+        if isGOG { return exists(Paths.gogDir + "/SkyrimSE.exe") }
         let manifest = (try? String(contentsOfFile: Paths.skyrimManifest, encoding: .utf8)) ?? ""
         return manifest.range(of: #""StateFlags"\s+"4""#, options: .regularExpression) != nil
     }
@@ -334,6 +343,7 @@ final class Launcher: ObservableObject {
     }
 
     func refreshChecks() {
+        isGOG = Paths.isGOG
         checks = [
             SetupCheck(id: "rosetta", title: "Rosetta 2", ok: exists(Paths.rosetta),
                        fix: "Click “Run setup” (or: softwareupdate --install-rosetta --agree-to-license)."),
@@ -345,12 +355,17 @@ final class Launcher: ObservableObject {
                        fix: "Applied by “Run setup” (without it Skyrim quits after the logo)."),
             SetupCheck(id: "dxmt", title: "Metal renderer (DXMT \(Launcher.pinnedDXMT ?? "runtime"))", ok: dxmtCurrent,
                        fix: "Click “Run setup” with Skyrim and Steam closed: updates DXMT (no more black shadows following characters)."),
+        ] + (isGOG ? [
+            SetupCheck(id: "skyrim", title: "Skyrim Anniversary Edition installed (GOG)", ok: skyrimInstalled,
+                       fix: "Click “Install from GOG…” and choose the folder with your GOG installers (≈27 GB)."),
+        ] : [
             SetupCheck(id: "steam", title: "Steam for Windows", ok: exists(Paths.steamExe),
                        fix: "Installed by “Run setup” (official Valve installer)."),
             SetupCheck(id: "login", title: "Logged in to Steam", ok: everLoggedIn,
                        fix: "Click “Log in to Steam” and sign in once (Steam Guard as usual)."),
             SetupCheck(id: "skyrim", title: "Skyrim Special Edition installed", ok: skyrimInstalled,
                        fix: "Click “Install Skyrim” (needs a Steam account that owns it; ≈16 GB)."),
+        ]) + [
             SetupCheck(id: "mouse", title: "Smooth mouse fix", ok: mouseFix == .applied,
                        fix: mouseFix == .unknown ? "Needs the SkyrimMT runtime (the patch matches that exact Wine build)."
                                                  : "Turn on “Smooth mouse fix” in the Game tab or click “Run setup”."),
@@ -386,7 +401,7 @@ final class Launcher: ObservableObject {
 
     func setUpEverything() {
         autoSetup = true; autoLoginStarted = false; autoInstallStarted = false
-        let base = ["rosetta", "wine", "prefix", "crashfix", "steam"]
+        let base = ["rosetta", "wine", "prefix", "crashfix"] + (isGOG ? [] : ["steam"])
         if checks.filter({ base.contains($0.id) }).allSatisfy(\.ok) { continueSetup() } else { runSetupInteractive() }
     }
 
@@ -394,6 +409,18 @@ final class Launcher: ObservableObject {
     func continueSetup() {
         guard autoSetup, !setupRunning else { return }
         refreshChecks()
+        if isGOG {
+            guard exists(Paths.prefix + "/system.reg") else { autoSetup = false; return }   // setup.sh stopped: its log says why
+            if !skyrimInstalled {
+                if autoInstallStarted { autoSetup = false; return }                    // the install stopped or was cancelled
+                autoInstallStarted = true; installFromGOG(); return
+            }
+            autoSetup = false
+            refreshPatches(); refreshSettings()
+            message = localized("Setup complete. Install the essential mods next (Mods → Essentials).")
+            NotificationCenter.default.post(name: .openModManagerEssentials, object: nil)
+            return
+        }
         guard exists(Paths.steamExe) else { autoSetup = false; return }               // setup.sh stopped: its log says why
         if !everLoggedIn {
             if !autoLoginStarted { autoLoginStarted = true; loginSteam() }
@@ -459,6 +486,73 @@ final class Launcher: ObservableObject {
             let r = SessionRunner.runSync([Paths.script("install-skyrim.sh")])
             await MainActor.run { self.message = r.output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
+    }
+
+    /// Skyrim from the player's own GOG offline installers (scripts/install-gog.sh): a folder with the base game's
+    /// setup_…exe + .bin files and the Anniversary Upgrade's. Runs silently in the prefix; progress in the setup log.
+    func installFromGOG() {
+        guard !setupRunning else { return }
+        guard exists(Paths.prefix + "/system.reg") else { message = localized("Run setup first (Wine environment)."); return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = localized("Choose the folder with your GOG installers (setup_the_elder_scrolls_v_skyrim_….exe and .bin files)")
+        guard panel.runModal() == .OK, let url = panel.url else {
+            autoSetup = false; message = localized("Choose the folder with your GOG installers to install Skyrim."); return
+        }
+        setupRunning = true; setupLog = []; gogProgress = 0
+        // a reinstall (newer GOG build) writes over the game folder: mods leave it first and are deployed again after
+        let reinstall = skyrimInstalled
+        guard reinstall else { runGOGInstall(url, redeploy: false); return }
+        message = localized("Removing mods from the game folder before the reinstall…")
+        Task.detached {
+            do { try ModKit.standard(home: URL(fileURLWithPath: Paths.game)).purge() }
+            catch {
+                await MainActor.run { self.setupRunning = false; self.gogProgress = nil; self.message = localizedFormat("Couldn't remove the mods from the game folder first: %@", "\(error)") }
+                return
+            }
+            await MainActor.run { self.runGOGInstall(url, redeploy: true) }
+        }
+    }
+
+    private func runGOGInstall(_ url: URL, redeploy: Bool) {
+        Session.ensureHelper()
+        message = localized("Installing Skyrim from your GOG installers — this takes a while (about 27 GB).")
+        let started = SessionRunner.run([Paths.script("install-gog.sh"), "install", url.path], env: scriptEnv(), onOutput: { line in
+            Task { @MainActor in
+                if line.hasPrefix("PROGRESS ") { self.gogProgress = Int(line.dropFirst(9)); return }
+                self.setupLog.append(line)
+                if line.hasPrefix("STEP ") { self.message = String(line.dropFirst(5)) }
+            }
+        }, onExit: { code in
+            Task { @MainActor in
+                self.setupRunning = false; self.gogProgress = nil
+                self.message = code == 0 ? localized("Skyrim is installed.")
+                    : localizedFormat("GOG install stopped — %@", self.setupLog.last { $0.hasPrefix("FAIL") }.map { String($0.dropFirst(5)) } ?? localized("see the log above."))
+                if code != 0 { self.autoSetup = false }
+                self.refreshPatches(); self.refreshSettings(); self.refresh()
+                ModManagerModel.shared?.reloadKit(); ModManagerModel.shared?.refreshVersions()   // the GOG game folder now exists
+                if redeploy {   // the mods removed before the reinstall go back (whatever the installer's result)
+                    if let m = ModManagerModel.shared { m.deploy() }
+                    else { Task.detached { _ = try? ModKit.standard(home: URL(fileURLWithPath: Paths.game)).deploy() } }
+                }
+            }
+        })
+        if !started {
+            setupRunning = false; gogProgress = nil; setupLog = ["FAIL couldn't start install-gog.sh"]
+            if redeploy { Task.detached { _ = try? ModKit.standard(home: URL(fileURLWithPath: Paths.game)).deploy() } }
+        }
+    }
+
+    /// Setup → "Skyrim from": which store this game environment uses (config/store). Only before Skyrim is installed:
+    /// one game folder holds one store's game (choose another game folder for the other one).
+    func setStore(gog: Bool) {
+        guard gog != isGOG, !skyrimInstalled, !setupRunning else { return }
+        try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
+        try? ((gog ? "gog" : "steam") + "\n").write(toFile: Paths.game + "/config/store", atomically: true, encoding: .utf8)
+        refreshChecks(); refreshSettings(); refresh()
+        ModManagerModel.shared?.reloadKit(); ModManagerModel.shared?.refreshVersions()   // game folder and My Games move
+        message = localized(gog ? "GOG version: Skyrim is installed from your own GOG installers, no Steam needed." : "Steam version.")
     }
 
     func chooseGameFolder() {
@@ -594,7 +688,7 @@ final class Launcher: ObservableObject {
         mk.recordLaunch()                 // crash analysis knows the profile
         mk.restoreDriftedBinaries()       // plugin DLLs that came back changed from the last run (Wine) → mod's copy
         Session.ensureHelper()
-        message = steam == .online ? "Starting Skyrim…" : "Starting Steam — waiting for login…"
+        message = isGOG || steam == .online ? "Starting Skyrim…" : "Starting Steam — waiting for login…"
         var extra: [String: String] = ["SKYRIMMT_USE_SKSE": skse ? "1" : "0"]
         if hud { extra["SKYRIMMT_METAL_HUD"] = "1" }
         if frameLog {
@@ -635,7 +729,7 @@ final class Launcher: ObservableObject {
         mk.restoreDriftedBinaries()
         do { try mk.writeVortexDeployment() } catch { message = localizedFormat("Couldn't list the deployed files for Keizaal: %@", "\(error)") }
         Session.ensureHelper()
-        message = steam == .online ? "Opening Keizaal Online…" : "Starting Steam — waiting for login…"
+        message = isGOG || steam == .online ? "Opening Keizaal Online…" : "Starting Steam — waiting for login…"
         Task.detached {
             let r = SessionRunner.runSync([Paths.script("keizaal.sh")])
             let logURL = URL(fileURLWithPath: Paths.logs + "/launcher.log")
@@ -1145,7 +1239,9 @@ struct ContentView: View {
                         playButton
                         HStack(spacing: 10) {
                             Button("Quit Skyrim") { launcher.quitSkyrim() }.disabled(!launcher.gameRunning)
-                            if launcher.steam == .online {
+                            if launcher.isGOG {
+                                EmptyView()   // the GOG version runs without a client
+                            } else if launcher.steam == .online {
                                 Button(launcher.steamWindow ? "Hide Steam" : "Show Steam") {
                                     launcher.steamWindow ? launcher.hideSteam() : launcher.showSteam()
                                 }
@@ -1388,23 +1484,28 @@ struct ContentView: View {
                 .labelsHidden().frame(width: 230)
             }
             Divider().overlay(Color.white.opacity(0.06))
-            HStack {
+            if launcher.isGOG {
                 RowText(title: "Skyrim version",
-                        detail: mods.versionCurrent == "steam" ? "Steam's current version. Pin an older one for mods that need it."
-                                                               : "Pinned: Steam updates can't break it. Per profile.")
-                Picker("", selection: Binding(get: { mods.versionCurrent }, set: { v in
-                    if v.hasPrefix("download:") { mods.downloadVersion(String(v.dropFirst(9))) } else { mods.selectVersion(v) }
-                })) {
-                    Text(mods.label(forVersion: "steam")).tag("steam")
-                    ForEach(mods.versionsInstalled, id: \.self) { Text(mods.label(forVersion: $0)).tag($0) }
-                    let missing = mods.versionsKnown.filter { !mods.versionsInstalled.contains($0) }
-                    if !missing.isEmpty {
-                        Divider()
-                        ForEach(missing, id: \.self) { Text(localizedFormat("Download Skyrim %@…", $0)).tag("download:\($0)") }
+                        detail: localizedFormat("%@. Install newer GOG installers over it to update.", mods.label(forVersion: "steam")))
+            } else {
+                HStack {
+                    RowText(title: "Skyrim version",
+                            detail: mods.versionCurrent == "steam" ? "Steam's current version. Pin an older one for mods that need it."
+                                                                   : "Pinned: Steam updates can't break it. Per profile.")
+                    Picker("", selection: Binding(get: { mods.versionCurrent }, set: { v in
+                        if v.hasPrefix("download:") { mods.downloadVersion(String(v.dropFirst(9))) } else { mods.selectVersion(v) }
+                    })) {
+                        Text(mods.label(forVersion: "steam")).tag("steam")
+                        ForEach(mods.versionsInstalled, id: \.self) { Text(mods.label(forVersion: $0)).tag($0) }
+                        let missing = mods.versionsKnown.filter { !mods.versionsInstalled.contains($0) }
+                        if !missing.isEmpty {
+                            Divider()
+                            ForEach(missing, id: \.self) { Text(localizedFormat("Download Skyrim %@…", $0)).tag("download:\($0)") }
+                        }
                     }
+                    .labelsHidden().frame(width: 230)
+                    .disabled(launcher.gameRunning || mods.versionDownloading != nil)
                 }
-                .labelsHidden().frame(width: 230)
-                .disabled(launcher.gameRunning || mods.versionDownloading != nil)
             }
             Divider().overlay(Color.white.opacity(0.06))
             OptionRow(title: "Smooth mouse fix",
@@ -1420,10 +1521,12 @@ struct ContentView: View {
                 Text(launcher.crashFix == .applied ? "Metal (DXMT)" : "Needs setup")
                     .font(.body(13)).foregroundStyle(launcher.crashFix == .applied ? Color.skCream : Color.skGoldLight)
             }
-            Divider().overlay(Color.white.opacity(0.06))
-            HStack {
-                RowText(title: "Screenshots", detail: "F12 in game (Steam). Kept inside this folder's Wine prefix.")
-                Button("Open") { launcher.openScreenshots() }.buttonStyle(SmallButtonStyle()).frame(width: 110)
+            if !launcher.isGOG {   // F12 screenshots are Steam's: the GOG version runs without it
+                Divider().overlay(Color.white.opacity(0.06))
+                HStack {
+                    RowText(title: "Screenshots", detail: "F12 in game (Steam). Kept inside this folder's Wine prefix.")
+                    Button("Open") { launcher.openScreenshots() }.buttonStyle(SmallButtonStyle()).frame(width: 110)
+                }
             }
         }
         .onAppear { launcher.refreshSettings(); mods.refreshVersions() }
@@ -1513,16 +1616,37 @@ struct ContentView: View {
 
     private var setup: some View {
         Card(title: "") {
-            Text("SkyrimMT includes its own Wine runtime. Steam and Skyrim are downloaded from Valve into your own folder.")
+            Text(launcher.isGOG ? "SkyrimMT includes its own Wine runtime. Skyrim is installed from your own GOG installers — no Steam needed."
+                                : "SkyrimMT includes its own Wine runtime. Steam and Skyrim are downloaded from Valve into your own folder.")
                 .font(.system(size: 12)).foregroundStyle(Color.skCream.opacity(0.7))
                 .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                RowText(title: "Skyrim from",
+                        detail: launcher.skyrimInstalled ? "Installed. For the other store, choose another game folder below."
+                                                         : "Steam, or the offline installers from your GOG library.")
+                Picker("", selection: Binding(get: { launcher.isGOG }, set: { launcher.setStore(gog: $0) })) {
+                    Text("Steam").tag(false)
+                    Text("GOG").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 160)
+                .disabled(launcher.skyrimInstalled || launcher.setupRunning || launcher.autoSetup)
+            }
             HStack(spacing: 10) {
                 Button(launcher.setupRunning || launcher.autoSetup ? "Setting up…" : launcher.setupComplete ? "Check setup" : "Set up everything") { launcher.setUpEverything() }
                     .buttonStyle(SmallButtonStyle(prominent: true)).disabled(launcher.setupRunning || launcher.autoSetup)
-                Button("Log in to Steam") { launcher.loginSteam() }
-                    .buttonStyle(SmallButtonStyle()).disabled(!exists(Paths.steamExe) || launcher.otherSteam)
-                Button("Install Skyrim") { launcher.installSkyrim() }
-                    .buttonStyle(SmallButtonStyle()).disabled(launcher.steam == .stopped)
+                if launcher.isGOG {
+                    Button(launcher.skyrimInstalled ? "Reinstall from GOG…" : "Install from GOG…") { launcher.installFromGOG() }
+                        .buttonStyle(SmallButtonStyle()).disabled(launcher.setupRunning || !exists(Paths.prefix + "/system.reg") || launcher.gameRunning)
+                } else {
+                    Button("Log in to Steam") { launcher.loginSteam() }
+                        .buttonStyle(SmallButtonStyle()).disabled(!exists(Paths.steamExe) || launcher.otherSteam)
+                    Button("Install Skyrim") { launcher.installSkyrim() }
+                        .buttonStyle(SmallButtonStyle()).disabled(launcher.steam == .stopped)
+                }
+            }
+            if let p = launcher.gogProgress {
+                ProgressView(value: Double(p), total: 100) { Text("Installing from GOG… \(p)%").font(.system(size: 11)) }
+                    .tint(Color.skGoldLight)
             }
             if !launcher.setupLog.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1569,9 +1693,11 @@ struct ContentView: View {
 
     private var status: some View {
         Card(title: "Status") {
-            StatusRow(label: "Steam",
-                      value: launcher.steam == .online ? "Online" : launcher.steam == .starting ? "Logging in…" : "Not running",
-                      color: launcher.steam == .online ? .green : launcher.steam == .starting ? .yellow : .gray)
+            if !launcher.isGOG {
+                StatusRow(label: "Steam",
+                          value: launcher.steam == .online ? "Online" : launcher.steam == .starting ? "Logging in…" : "Not running",
+                          color: launcher.steam == .online ? .green : launcher.steam == .starting ? .yellow : .gray)
+            }
             StatusRow(label: "Skyrim",
                       value: launcher.gameRunning ? "Running" : launcher.loaderRunning ? "Starting…" : launchingPlay ? "Launching…" : "Not running",
                       color: launcher.gameRunning ? .green : (launchingPlay || launcher.loaderRunning) ? .yellow : .gray)

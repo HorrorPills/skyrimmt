@@ -227,7 +227,15 @@ final class ModManagerModel: ObservableObject {
         }
     }
 
-    func label(forVersion v: String) -> String { v == "steam" ? "\(versionSteam.isEmpty ? "Steam" : versionSteam) (Steam, auto-updates)" : "\(v) (pinned)" }
+    func label(forVersion v: String) -> String {
+        if v == "steam" && kit.isGOG { return "\(versionSteam.isEmpty ? "GOG" : versionSteam) (GOG)" }
+        return v == "steam" ? "\(versionSteam.isEmpty ? "Steam" : versionSteam) (Steam, auto-updates)" : "\(v) (pinned)"
+    }
+
+    /// The version key a profile runs on. The GOG version has no pinned versions: always its own install.
+    func versionKey(forProfile name: String) -> String {
+        kit.isGOG ? "steam" : ModKit.versionKey(kit.effectiveGameVersion(name), steamVersion: versionSteam, installed: versionsInstalled)
+    }
 
     /// Download a pinned version (Steam depots under the player's account; first time: QR login in the Steam app).
     func downloadVersion(_ v: String) {
@@ -392,6 +400,11 @@ final class ModManagerModel: ObservableObject {
                     }
                     // the version the collection really runs on: the SKSE it ships, else its metadata
                     let detected = rec?.gameVersion.flatMap { v in self.versionsKnown.first { v.hasPrefix($0) } ?? (v == self.versionSteam ? "steam" : nil) }
+                    // GOG: no other versions to move to; say when the collection was made for a Steam version
+                    if self.kit.isGOG, !info.gameVersions.isEmpty, !self.versionSteam.isEmpty,
+                       !info.gameVersions.contains(where: { $0.hasPrefix(self.versionSteam) }) {
+                        self.message = (self.message ?? "") + " " + localizedFormat("It was made for Skyrim %@ (Steam); SKSE plugins built only for that version will not load on GOG %@ (Health shows them).", info.gameVersions.joined(separator: ", "), self.versionSteam)
+                    }
                     if let want = detected ?? info.gameVersions.compactMap({ g in self.versionsKnown.first { g.hasPrefix($0) } }).first,
                        want != "steam", want != self.kit.gameVersionKey {
                         if self.versionsInstalled.contains(want) { self.selectVersion(want) }
@@ -1335,6 +1348,8 @@ final class ModManagerModel: ObservableObject {
 
     private func startWabbajack(title: String, machine: String?, file: URL?, sizes: (Int64, Int64)?, skipConfirm: Bool = false) {
         guard wjRunning == nil else { return }
+        // lists check the game's files against the Steam build they were made with; the GOG build's files differ
+        guard !kit.isGOG else { message = localized("Wabbajack lists are made for the Steam version of Skyrim and can't be installed on the GOG version. Collections and single mods work."); return }
         if !wjInstalled {
             guard ModManagerModel.toolPackages["wabbajack"] != nil else { message = WabbajackError.notInstalled.description; return }
             let k = kit
@@ -1534,7 +1549,7 @@ final class ModManagerModel: ObservableObject {
         guard name != profile else { return }
         guard !gameRunning() else { message = localized("Quit Skyrim before switching profiles."); return }
         // collection/list profiles keep their version even if never stored; "1.7.104" = Steam's install when it is that
-        let want = ModKit.versionKey(kit.effectiveGameVersion(name), steamVersion: versionSteam, installed: versionsInstalled)
+        let want = versionKey(forProfile: name)
         if want != kit.gameVersionKey {
             // the profile is pinned to another Skyrim version: clear the old game folder, then switch inside the new one
             guard want == "steam" || versionsInstalled.contains(want) else { message = localizedFormat("Profile %@ needs Skyrim %@. Download it in the Game tab.", name, want); return }
@@ -1568,7 +1583,7 @@ final class ModManagerModel: ObservableObject {
     func restoreCollectionLoadOrder(_ c: InstalledCollection) {
         guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first."); return }
-        guard c.profile != profile || ModKit.versionKey(kit.effectiveGameVersion(c.profile), steamVersion: versionSteam, installed: versionsInstalled) == kit.gameVersionKey else {
+        guard c.profile != profile || versionKey(forProfile: c.profile) == kit.gameVersionKey else {
             message = localizedFormat("Switch “%@” to Skyrim %@ first (Game tab).", c.profile, kit.effectiveGameVersion(c.profile)); return
         }
         let k = kit, client = client()
@@ -1595,7 +1610,9 @@ final class ModManagerModel: ObservableObject {
     func profileInfo(_ name: String) -> String {
         guard let p = kit.profile(name) else { return "" }
         let version = kit.effectiveGameVersion(name)
-        var parts = [version == "steam"
+        var parts = [kit.isGOG   // GOG: always its own install (no pinned versions)
+                         ? (versionSteam.isEmpty ? localized("Skyrim (GOG)") : localizedFormat("Skyrim %@ (GOG)", versionSteam))
+                         : version == "steam"
                          ? (versionSteam.isEmpty ? localized("Skyrim (Steam)") : localizedFormat("Skyrim %@ (Steam)", versionSteam))
                          : localizedFormat("Skyrim %@", version),
                      localizedFormat("%ld of %ld mods", p.mods.filter(\.enabled).count, p.mods.count)]
@@ -2081,7 +2098,7 @@ struct ModManagerView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(e.name).fontWeight(.medium)
                         Text(e.why).font(.callout)
-                        Text(e.note(for: model.gameVersion())).font(.caption).foregroundStyle(.secondary)
+                        Text(e.note(for: model.gameVersion(), gog: model.kit.isGOG)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button(ok ? "Page" : "Get on Nexus") { NSWorkspace.shared.open(e.filesURL) }

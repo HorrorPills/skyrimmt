@@ -118,7 +118,8 @@ extension ModManagerModel {
             if !game.isEmpty, game != skse {
                 let canPin = versionsKnown.contains(skse)
                 out.append(HealthItem(id: "skse-mismatch", severity: .problem, title: localizedFormat("SKSE is for Skyrim %@, but the game is %@", skse, game),
-                                      detail: kit.gameVersionKey == "steam"
+                                      detail: kit.isGOG ? localizedFormat("SKSE mods will not load until SKSE matches. Install the GOG build of SKSE for %@.", game)
+                                        : kit.gameVersionKey == "steam"
                                         ? localized("Steam updated Skyrim. SKSE mods will not load until SKSE matches. ") + (canPin ? localizedFormat("This profile can run on Skyrim %@ instead (a separate copy Steam does not update).", skse) : localizedFormat("Install SKSE for %@ when available.", game))
                                         : localizedFormat("Reinstall the SKSE build for %@.", game),
                                       fix: canPin ? localizedFormat("Use Skyrim %@", skse) : localized("SKSE on Nexus"),

@@ -15,14 +15,14 @@ extension ModManagerModel {
         guard !missing.isEmpty else { message = localized("All essentials are installed."); return }
         let premium = nexusUser?.premium ?? false
         if !premium && !isNxmHandler { becomeNxmHandler(); guard isNxmHandler else { return } }
-        let c = client(), folder = kit.home.appendingPathComponent("downloads"), gv = gameVersion()
+        let c = client(), folder = kit.home.appendingPathComponent("downloads"), gv = gameVersion(), gog = kit.isGOG
         busy = localized("Installing essentials…")
         colCancelled = false
         Task {
             var archives: [URL] = [], failed: [String] = []
             outer: for (i, e) in missing.enumerated() {
                 do {
-                    let files = ModKit.essentialFiles(e, from: try await c.files(e.nexusID), gameVersion: gv)
+                    let files = ModKit.essentialFiles(e, from: try await c.files(e.nexusID), gameVersion: gv, gog: gog)
                     guard !files.isEmpty else { failed.append(e.name); continue }
                     for f in files {
                         let job = beginDownload("\(e.name) \(f.version)")

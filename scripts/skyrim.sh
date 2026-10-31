@@ -1,6 +1,7 @@
 #!/bin/bash
 # Start Skyrim SE directly (SkyrimSE.exe, no Bethesda launcher) inside SkyrimMT's prefix. Steam must be logged on
-# first (ensure_steam). Returns once the game process is started; the session helper watches it from there.
+# first (ensure_steam); the GOG version starts without any client. Returns once the game process is started; the
+# session helper watches it from there.
 #   scripts/skyrim.sh [args for SkyrimSE.exe]
 # Environment:
 #   SKYRIMMT_RENDERER=dxmt|dxvk     D3D11 layer (default dxmt = the runtime's builtin d3d11/dxgi)
@@ -15,7 +16,9 @@ if game_running; then echo "Skyrim is already running"; exit 0; fi
 
 # steam_appid.txt makes SteamAPI_RestartAppIfNecessary return false, so SkyrimSE.exe is not relaunched through
 # Steam (which would open the Bethesda launcher). Steamworks docs: partner.steamgames.com/doc/sdk/api
-[ "$(cat "$GAMEDIR/steam_appid.txt" 2>/dev/null)" = "$SKYRIM_APPID" ] || printf '%s' "$SKYRIM_APPID" > "$GAMEDIR/steam_appid.txt"
+if ! is_gog; then
+  [ "$(cat "$GAMEDIR/steam_appid.txt" 2>/dev/null)" = "$SKYRIM_APPID" ] || printf '%s' "$SKYRIM_APPID" > "$GAMEDIR/steam_appid.txt"
+fi
 
 # DXMT stray-Release fix (PLAN S7): without it Skyrim aborts right after the Bethesda logo
 DXMTP="$SKYRIMMT_ROOT/tools/wine-patches/dxmt_purevirtual_return.sh"

@@ -118,16 +118,29 @@ public final class ModKit {
     public static func steamGameDir(_ home: URL) -> URL {
         home.appendingPathComponent("prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition")
     }
+    public static func gogGameDir(_ home: URL) -> URL {
+        home.appendingPathComponent("prefix/drive_c/GOG Games/Skyrim Anniversary Edition")
+    }
+    /// Where a SKYRIM_HOME's Skyrim comes from (config/store, scripts/_env.sh): Steam, or the player's own GOG installers
+    /// (scripts/install-gog.sh). The version key "steam" means the store's own install either way; GOG has no pinned versions.
+    public static func isGOG(_ home: URL) -> Bool {
+        ((try? String(contentsOf: home.appendingPathComponent("config/store"), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == "gog"
+    }
+    public var isGOG: Bool { ModKit.isGOG(home) }
+    /// The store's own install (version key "steam").
+    public static func baseGameDir(_ home: URL) -> URL { isGOG(home) ? gogGameDir(home) : steamGameDir(home) }
 
     /// Standard SkyrimMT layout for a SKYRIM_HOME, honouring the version switcher's selection.
     public static func standard(home: URL, user: String = NSUserName()) -> ModKit {
-        let ptxt = home.appendingPathComponent("prefix/drive_c/users/\(user)/AppData/Local/Skyrim Special Edition/plugins.txt")
+        let gog = isGOG(home)
+        // the GOG build keeps plugins.txt (and its My Games folder) under its own name
+        let ptxt = home.appendingPathComponent("prefix/drive_c/users/\(user)/AppData/Local/Skyrim Special Edition\(gog ? " GOG" : "")/plugins.txt")
         let v = ((try? String(contentsOf: home.appendingPathComponent("config/game-version"), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let vdir = home.appendingPathComponent("versions/\(v)")
-        if !v.isEmpty, FileManager.default.fileExists(atPath: vdir.appendingPathComponent(".skyrimmt-version").path) {
+        if !gog, !v.isEmpty, FileManager.default.fileExists(atPath: vdir.appendingPathComponent(".skyrimmt-version").path) {
             return ModKit(home: home, gameDir: vdir, pluginsTxt: ptxt, versionKey: v)
         }
-        return ModKit(home: home, gameDir: steamGameDir(home), pluginsTxt: ptxt)
+        return ModKit(home: home, gameDir: baseGameDir(home), pluginsTxt: ptxt)
     }
 
     func saveMods() throws { try writeJSON(mods, to: modsURL) }

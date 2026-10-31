@@ -3,7 +3,9 @@
 #   scripts/steam.sh            background (no window) — normal use
 #   scripts/steam.sh --login    with window — first login / account changes
 #   scripts/steam.sh --show     open the running client's main window (launcher "Show Steam")
-. "$(dirname "$0")/_env.sh"; cd "$STEAM_DIR" || { echo "Steam is not installed — run scripts/setup.sh"; exit 1; }
+. "$(dirname "$0")/_env.sh"
+is_gog && { echo "not needed: this is a GOG game environment"; exit 1; }
+cd "$STEAM_DIR" || { echo "Steam is not installed — run scripts/setup.sh"; exit 1; }
 mkdir -p "$SKYRIM_HOME/logs"
 if [ "${1:-}" = --show ]; then
   steam_running || { echo "steam is not running"; exit 1; }

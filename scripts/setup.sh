@@ -3,6 +3,8 @@
 #   scripts/setup.sh [--runtime <path-or-url to tf2mt-runtime-*.tar.xz>]
 # Steps: Rosetta → Wine runtime → DXMT → mouse patch → prefix (Windows 10) → Steam (Windows) → INI defaults →
 #        Steam login / Skyrim install (TODO for the user, done from the launcher).
+# A GOG game environment (config/store = gog) skips Steam; Skyrim comes from the player's GOG installers
+# (scripts/install-gog.sh, started from the launcher).
 # Output lines starting with "==>" are step headers, "OK"/"SKIP"/"FAIL"/"TODO" are results, "DONE" ends a run
 # (parsed by the launcher).
 set -u
@@ -114,8 +116,9 @@ udir="$WINEPREFIX/drive_c/users/${USER:-$(id -un)}"; fixed=""
 for d in Desktop Documents Downloads Music Pictures Videos; do
   [ -L "$udir/$d" ] || continue
   target=$(readlink "$udir/$d"); rm "$udir/$d" && mkdir -p "$udir/$d" || fail "could not replace the $d link"
-  if [ "$d" = Documents ] && [ -d "$target/My Games/Skyrim Special Edition" ]; then
-    mkdir -p "$udir/Documents/My Games" && cp -cpR "$target/My Games/Skyrim Special Edition" "$udir/Documents/My Games/" \
+  mg=$(basename "$MYGAMES_DIR")   # "Skyrim Special Edition" (Steam) or "… GOG"
+  if [ "$d" = Documents ] && [ -d "$target/My Games/$mg" ]; then
+    mkdir -p "$udir/Documents/My Games" && cp -cpR "$target/My Games/$mg" "$udir/Documents/My Games/" \
       || fail "could not copy Skyrim settings from $target"
     echo "     copied existing Skyrim settings/saves from $target/My Games (original left in place)"
   fi
@@ -161,7 +164,8 @@ case $st in
 esac
 
 step "Steam for Windows"
-if [ -f "$STEAM_DIR/steam.exe" ]; then skip "installed"
+if is_gog; then skip "not needed (GOG version)"
+elif [ -f "$STEAM_DIR/steam.exe" ]; then skip "installed"
 else
   inst="$SKYRIM_HOME/cache/SteamSetup.exe"
   curl -fsSL --retry 3 -o "$inst" https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe || fail "Steam installer download failed"
@@ -195,6 +199,13 @@ elif [ -f "$GAMEDIR/Skyrim/SkyrimPrefs.ini" ]; then
 else skip "SkyrimPrefs.ini: Skyrim not installed yet"
 fi
 
+if is_gog; then
+  step "Skyrim (GOG)"
+  if [ -f "$GOG_GAMEDIR/SkyrimSE.exe" ]; then skip "Skyrim installed"
+  else todo "install Skyrim: in the launcher click “Install from GOG…” and choose the folder with your GOG installers"
+  fi
+  echo "DONE"; exit 0
+fi
 step "Steam login + Skyrim Special Edition"
 if grep -q '"StateFlags"[[:space:]]*"4"' "$STEAM_DIR/steamapps/appmanifest_$SKYRIM_APPID.acf" 2>/dev/null; then skip "Skyrim installed"
 elif grep -q 'Logged On' "$STEAM_DIR/logs/connection_log.txt" 2>/dev/null; then todo "install Skyrim: in the launcher click “Install Skyrim” (≈25 GB with Anniversary Edition)"

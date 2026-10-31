@@ -9,6 +9,8 @@
 #   versions.sh download <version>     create/update versions/<version> (progress lines "PROGRESS <pct>", QR code lines)
 #   versions.sh select <version|steam> which game folder Play uses (the app redeploys the profile's mods)
 #   versions.sh remove <version>
+# The key "steam" means the store's own install: Steam's, or the GOG version's (no pinned versions for GOG: its builds
+# are not on Steam's depots).
 . "$(dirname "$0")/_env.sh"
 VDIR="$SKYRIM_HOME/versions"; DD_DIR="$SKYRIM_HOME/tools/depotdownloader"; DD="$DD_DIR/DepotDownloader"
 USERFILE="$SKYRIM_HOME/config/steam-depot-user"
@@ -45,15 +47,17 @@ get_dd() {
 
 case "${1:-status}" in
   status)
-    echo "current=$(cat "$SKYRIM_HOME/config/game-version" 2>/dev/null || echo steam)"
-    echo "steam_version=$(GAMEDIR="$STEAM_GAMEDIR" "$SKYRIMMT_ROOT/scripts/settings.sh" status | sed -n 's/^game_version=//p')"
+    if is_gog; then echo "current=steam"; else echo "current=$(cat "$SKYRIM_HOME/config/game-version" 2>/dev/null || echo steam)"; fi
+    echo "steam_version=$(GAMEDIR="$BASE_GAMEDIR" "$SKYRIMMT_ROOT/scripts/settings.sh" status | sed -n 's/^game_version=//p')"
+    echo "store=$SKYRIM_STORE"
     echo "installed=$(installed | tr '\n' ' ')"
-    echo "known=$KNOWN"
+    if is_gog; then echo "known="; else echo "known=$KNOWN"; fi
     echo "steam_user=$(cat "$USERFILE" 2>/dev/null)"
     ;;
   prepare) get_dd && "$DD" -V 2>&1 | head -2 ;;
   download)
     v=${2:?usage: versions.sh download <version>}
+    is_gog && { echo "FAIL other versions come from Steam's depots — not available for the GOG version"; exit 1; }
     pairs=$(manifests "$v") || { echo "FAIL unknown version $v (known: $KNOWN)"; exit 2; }
     game_running && { echo "FAIL quit Skyrim first"; exit 1; }
     get_dd || exit 1
@@ -99,6 +103,7 @@ case "${1:-status}" in
     v=${2:?usage: versions.sh select <version|steam>}
     game_running && { echo "quit Skyrim first"; exit 1; }
     if [ "$v" = steam ]; then rm -f "$SKYRIM_HOME/config/game-version"
+    elif is_gog; then echo "the GOG version has no pinned versions"; exit 1
     else [ -f "$VDIR/$v/.skyrimmt-version" ] || { echo "Skyrim $v is not installed"; exit 1; }; echo "$v" > "$SKYRIM_HOME/config/game-version"; fi
     echo "selected $v"
     ;;

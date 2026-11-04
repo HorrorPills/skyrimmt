@@ -7,6 +7,8 @@ public struct Essential: Identifiable, Equatable {
     public let id: String
     public let name: String
     public let nexusID: Int
+    /// Other Nexus pages of the same mod (an install from one of them counts).
+    public var alsoNexusIDs: [Int] = []
     public let why: String
     public let note: String
     /// files (relative to the game folder, case-insensitive glob on the last component) that show it is installed
@@ -28,7 +30,6 @@ public struct Essential: Identifiable, Equatable {
         switch id {
         case "skse": return "Choose the build for game \(gameVersion) on Nexus."
         case "addresslib": return "Choose the All in One file on Nexus."
-        case "displaytweaks": return "Choose a build that supports \(gameVersion) on Nexus."
         default: return note
         }
     }
@@ -42,8 +43,8 @@ public let essentials: [Essential] = [
               note: "All in One, v13 or newer for 1.7.104.", marker: "Data/SKSE/Plugins/versionlib-*.bin"),
     Essential(id: "enginefixes", name: "SSE Engine Fixes", nexusID: 17230, why: "Fixes engine bugs and crashes.",
               note: "Plugin and preloader; both are installed.", marker: "Data/SKSE/Plugins/EngineFixes.dll"),
-    Essential(id: "displaytweaks", name: "SSE Display Tweaks (updated for 1.7.104)", nexusID: 189739, why: "Frame rates above 60 without physics issues, and a frame limiter.",
-              note: "Unofficial update for 1.7.99–1.7.104.", marker: "Data/SKSE/Plugins/SSEDisplayTweaks.dll"),
+    Essential(id: "displaytweaks", name: "SSE Display Tweaks", nexusID: 34705, alsoNexusIDs: [189739], why: "Frame rates above 60 without physics issues, and a frame limiter.",
+              note: "Supports SE 1.5.97, AE 1.6 and 1.7.", marker: "Data/SKSE/Plugins/SSEDisplayTweaks.dll"),
     Essential(id: "crashlogger", name: "Crash Logger SSE AE VR", nexusID: 59818, why: "Writes a crash log that the Crashes page analyzes.",
               note: "Logs go to My Games/Skyrim Special Edition/SKSE.", marker: "Data/SKSE/Plugins/CrashLogger.dll"),
     Essential(id: "skyui", name: "SkyUI", nexusID: 12604, why: "Improved menus and the mod configuration menu (MCM).",
@@ -67,6 +68,10 @@ extension ModKit {
             default: return []
             }
         }
+        if e.id == "displaytweaks" {   // one file for every version (checked on Nexus 2026-11-04: 0.5.25)
+            let main = files.filter { $0.category.uppercased() == "MAIN" }.sorted { $0.uploadedTimestamp > $1.uploadedTimestamp }
+            return (main.first(where: \.isPrimary) ?? main.first).map { [$0] } ?? []
+        }
         guard gameVersion.isEmpty || gameVersion.hasPrefix("1.7.") else { return [] }
         let main = files.filter { $0.category.uppercased() == "MAIN" }.sorted { $0.uploadedTimestamp > $1.uploadedTimestamp }
         func newest(_ needle: String) -> NexusFileInfo? { main.first { $0.name.lowercased().contains(needle.lowercased()) } }
@@ -83,7 +88,7 @@ extension ModKit {
 
     /// Is the essential present in the game folder (deployed) or installed in SkyrimMT (by Nexus id)?
     public func isInstalled(_ e: Essential) -> Bool {
-        if mods.contains(where: { $0.nexus?.modID == e.nexusID }) { return true }
+        if mods.contains(where: { m in m.nexus.map { $0.modID == e.nexusID || e.alsoNexusIDs.contains($0.modID) } ?? false }) { return true }
         let parts = e.marker.split(separator: "/").map(String.init)
         let dir = parts.dropLast().reduce(gameDir) { $0.appendingPathComponent($1) }
         let pattern = parts.last!.lowercased()

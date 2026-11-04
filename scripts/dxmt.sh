@@ -16,7 +16,16 @@ installed() { cat "$MARK" 2>/dev/null || /usr/bin/perl -0777 -ne 'print $1 if /D
 status() {
   [ -d "$LIB" ] || { echo no-runtime; return; }
   [ -n "${DXMT_VERSION:-}" ] || { echo up-to-date; return; }   # nothing pinned: the runtime's own DXMT
-  local v; v=$(installed); [ "$v" = "$DXMT_VERSION" ] && echo up-to-date || echo "outdated ${v:-unknown}"
+  local v; v=$(installed); [ "$v" = "$DXMT_VERSION" ] || { echo "outdated ${v:-unknown}"; return; }
+  # the prefix keeps real copies: they must match the runtime's, or the game still runs the old build
+  local pair arch sys f
+  for pair in x86_64-windows:system32 i386-windows:syswow64; do
+    arch=${pair%%:*}; sys=${pair##*:}
+    for f in $PREFIX_DLLS; do
+      [ -f "$WINEPREFIX/drive_c/windows/$sys/$f.dll" ] && ! cmp -s "$LIB/$arch/$f.dll" "$WINEPREFIX/drive_c/windows/$sys/$f.dll" && { echo "outdated $v (prefix copy of $f.dll differs)"; return; }
+    done
+  done
+  echo up-to-date
 }
 
 case "${1:-status}" in
@@ -25,7 +34,7 @@ case "${1:-status}" in
     st=$(status)
     [ "$st" = up-to-date ] && { echo "DXMT $(installed) already installed"; exit 0; }
     [ "$st" = no-runtime ] && { echo "no Wine runtime in $SKYRIM_HOME"; exit 1; }
-    server_up && { echo "Wine is running in $SKYRIM_HOME — quit Skyrim and Steam first"; exit 1; }
+    stop_idle_wine || { echo "Wine is running in $SKYRIM_HOME — quit Skyrim and Steam first"; exit 1; }
     src="${SKYRIMMT_DXMT:-$DXMT_URL}"; archive="$src"
     if [[ $src == http* ]]; then
       archive="$SKYRIM_HOME/cache/$(basename "$src")"

@@ -1216,9 +1216,25 @@ final class ModManagerModel: ObservableObject {
     }
     /// Download a prebuilt tool the first time it's needed.
     nonisolated func ensureTool(_ k: ModKit, _ folder: String, status: (String) async -> Void) async throws {
-        guard let p = ModManagerModel.toolPackages[folder], !k.toolInstalled(p) else { return }
+        guard let p = ModManagerModel.toolPackages[folder], !k.toolCurrent(p) else { return }
         await status(localizedFormat("Downloading %@…", p.name))
-        try k.installToolPackage(p)
+        do { try k.installToolPackage(p) } catch { if !k.toolInstalled(p) { throw error } }   // offline: the older build still works
+    }
+
+    /// Re-check / first launch after an app update: tools already installed move to the build this version pins.
+    func updateInstalledTools() {
+        guard busy == nil, wjRunning == nil else { return }
+        let k = kit, outdated = ModManagerModel.toolPackages.values.filter { k.toolInstalled($0) && !k.toolCurrent($0) }
+        guard !outdated.isEmpty else { return }
+        Task.detached {
+            var updated: [String] = []
+            for p in outdated {
+                await MainActor.run { self.message = localizedFormat("Updating %@…", p.name) }
+                if (try? k.installToolPackage(p)) != nil { updated.append(p.name) }
+            }
+            let names = updated
+            await MainActor.run { self.message = names.isEmpty ? nil : localizedFormat("Updated: %@.", names.joined(separator: ", ")) }
+        }
     }
 
     func refreshPandora() {
@@ -1346,11 +1362,11 @@ final class ModManagerModel: ObservableObject {
         startWabbajack(title: u.deletingPathExtension().lastPathComponent, machine: nil, file: u, sizes: nil)
     }
 
-    private func startWabbajack(title: String, machine: String?, file: URL?, sizes: (Int64, Int64)?, skipConfirm: Bool = false) {
+    private func startWabbajack(title: String, machine: String?, file: URL?, sizes: (Int64, Int64)?, skipConfirm: Bool = false, toolChecked: Bool = false) {
         guard wjRunning == nil else { return }
         // lists check the game's files against the Steam build they were made with; the GOG build's files differ
         guard !kit.isGOG else { message = localized("Wabbajack lists are made for the Steam version of Skyrim and can't be installed on the GOG version. Collections and single mods work."); return }
-        if !wjInstalled {
+        if !wjInstalled || (!toolChecked && ModManagerModel.toolPackages["wabbajack"].map { !kit.toolCurrent($0) } ?? false) {
             guard ModManagerModel.toolPackages["wabbajack"] != nil else { message = WabbajackError.notInstalled.description; return }
             let k = kit
             busy = localized("Downloading the Wabbajack engine…")
@@ -1358,7 +1374,7 @@ final class ModManagerModel: ObservableObject {
                 let err: String? = await { do { try await self.ensureTool(k, "wabbajack") { _ in }; return nil } catch { return "\(error)" } }()
                 await MainActor.run {
                     self.busy = nil
-                    if let err { self.message = err } else { self.startWabbajack(title: title, machine: machine, file: file, sizes: sizes, skipConfirm: skipConfirm) }
+                    if let err { self.message = err } else { self.startWabbajack(title: title, machine: machine, file: file, sizes: sizes, skipConfirm: skipConfirm, toolChecked: true) }
                 }
             }
             return
@@ -1380,8 +1396,10 @@ final class ModManagerModel: ObservableObject {
         Notify.prepare()
         wjRunning = title; wjStatus = localized("Getting the list…"); wjFraction = nil
         Task.detached {
+            var fetched: URL?   // a Retry doesn't download the list file again (some are several GB)
             do {
                 let listFile = try file ?? k.downloadWabbajackFile(e, machineURL: machine!)
+                fetched = listFile
                 let info = try ModKit.wabbajackInfo(listFile)
                 // the list's Skyrim version decides the game folder; the engine reads a vanilla view of it
                 let target = try k.gameDirFor(listVersion: info.gameVersion, steamGameDir: ModKit.steamGameDir(k.home), steamVersion: steamV)
@@ -1409,10 +1427,11 @@ final class ModManagerModel: ObservableObject {
                     self.reload()
                 }
             } catch {
+                let retryFile = file ?? fetched
                 await MainActor.run {
                     let cancelled = "\(error)".contains("cancelled")
                     if !cancelled {
-                        self.wjFailure = WabbajackFailure(title: title, machine: machine, file: file, sizes: sizes, error: "\(error)", step: self.wjPhase.isEmpty ? self.wjStatus : self.wjPhase,
+                        self.wjFailure = WabbajackFailure(title: title, machine: machine, file: retryFile, sizes: sizes, error: "\(error)", step: self.wjPhase.isEmpty ? self.wjStatus : self.wjPhase,
                                                           log: k.home.appendingPathComponent("logs/wabbajack-\(ModKit.sanitize(title)).log"))
                     }
                     self.wjRunning = nil; self.wjProcess = nil

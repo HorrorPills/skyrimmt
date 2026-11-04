@@ -106,6 +106,52 @@ func existingDownloadTests() {
     check(d.existingDownload(modID: 12604, fileID: 35407, md5: nil, size: nil) == nil, "sidecar without its archive ignored")
 }
 
+/// Issue #8: a mod already installed and used by a collection stays the collection's; a later revision doesn't leave its
+/// old file enabled next to the new one, and another file of a shipped mod in the profile is switched off.
+func collectionDuplicateTests() {
+    section("collection update: no second copy of a shipped mod")
+    let f = Fixture("coldup")
+    let k = f.kit
+    let src = freshDir("coldup-src")
+    try! fm.createDirectory(at: k.downloadsDir, withIntermediateDirectories: true)
+    func archive(_ name: String, _ mid: Int, _ fid: Int, _ md5: String) {
+        write(src.appendingPathComponent("\(name)/\(name)-\(fid).esp"), "\(name)-\(fid)")
+        pack(src.appendingPathComponent(name), k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip"), format: "zip")
+        write(k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip.meta.json"),
+              #"{"modID":\#(mid),"fileID":\#(fid),"modName":"\#(name)","fileName":"\#(name)","version":"\#(fid)","md5":"\#(md5)","downloadedAt":"2026-10-18T10:00:00Z"}"#)
+        try! fm.removeItem(at: src.appendingPathComponent(name))
+    }
+    archive("Lib", 7, 70, "a7"); archive("Lib", 7, 71, "a8"); archive("Other", 9, 90, "a9")
+    func col(_ mods: [(String, Int, Int, String)]) -> (CollectionManifest, (Int) -> CollectionInfo) {
+        let m = mods.map { #"{"name":"\#($0.0)","optional":false,"phase":0,"source":{"type":"nexus","modId":\#($0.1),"fileId":\#($0.2),"md5":"\#($0.3)"}}"# }
+        let man = try! CollectionManifest.parse(Data(#"{"info":{"name":"Dup Col"},"mods":[\#(m.joined(separator: ","))],"modRules":[],"loadOrder":[]}"#.utf8))
+        return (man, { rev in CollectionInfo(slug: "dupcol", name: "Dup Col", revision: rev, downloadLink: "", gameVersions: [], totalSize: 0,
+                                             files: mods.map { CollectionFile(modID: $0.1, fileID: $0.2, modName: $0.0, fileName: $0.0, version: "\($0.2)", size: 0, optional: false) }) })
+    }
+    let client = NexusClient(apiKey: "k", appVersion: "t", baseURL: URL(string: "https://api.test/v1/")!, session: stubSession())
+    // the player already has Lib 70 from before: the collection reuses that record
+    let d70 = NexusDownloader(client: client, folder: k.downloadsDir).existingDownload(modID: 7, fileID: 70, md5: "a7", size: nil)!
+    let (work, layout) = try! k.beginInstall(archive: d70)
+    let lib70 = try! k.finishInstall(work: work, layout: layout, name: "Lib", version: "70", fomod: nil, source: nil, nexus: NexusRef(modID: 7, fileID: 70))
+    let (m1, i1) = col([("Lib", 7, 70, "a7"), ("Other", 9, 90, "a9")])
+    let prof = runAsync { try await k.installCollection(info: i1(1), manifest: m1, items: m1.mods, client: client, gameVersion: "1.6.1170", progress: { _, _ in }) }
+    check(k.installedCollections().first?.reused == [lib70.id], "the reused mod is recorded as the collection's")
+    let (m2, i2) = col([("Lib", 7, 71, "a8"), ("Other", 9, 90, "a9")])
+    _ = runAsync { try await k.installCollection(info: i2(2), manifest: m2, items: m2.mods, client: client, gameVersion: "1.6.1170", progress: { _, _ in }) }
+    let q = k.profile(prof)!
+    let on71 = k.mods.first { $0.nexus?.fileID == 71 }!.id
+    check(q.mods.first { $0.id == on71 }?.enabled == true, "the new file is on")
+    check(q.mods.first { $0.id == lib70.id }?.enabled != true, "the reused old file isn't left on next to it")
+    // a player's copy of a shipped mod (another file, added by hand): stays in the profile, off
+    var p = try! k.currentProfile(); p.mods.append(ProfileMod(id: lib70.id, enabled: true)); p.mods.removeAll { $0.id == lib70.id }; p.mods.append(ProfileMod(id: lib70.id, enabled: true)); try! k.saveProfile(p)
+    var cols = k.installedCollections(); cols[0].reused = nil; cols[0].modIDs.removeAll { $0 == lib70.id }; try! k.saveCollections(cols)
+    let (m3, i3) = col([("Lib", 7, 71, "a8"), ("Other", 9, 90, "a9")])
+    _ = runAsync { try await k.installCollection(info: i3(3), manifest: m3, items: m3.mods, client: client, gameVersion: "1.6.1170", progress: { _, _ in }) }
+    let r = k.profile(prof)!
+    check(r.mods.first { $0.id == lib70.id }?.enabled == false, "another file of a shipped mod is kept, switched off")
+    check(r.mods.first { $0.id == on71 }?.enabled == true, "the collection's own file stays on")
+}
+
 func collectionUpdateTests() {
     section("collection update: new revision in place")
     let f = Fixture("colupdate")

@@ -51,6 +51,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>SkyrimMT</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>sv</string>
+  </array>
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>Nexus Mods download</string>

@@ -14,6 +14,7 @@ let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SKYRIM_HOME
 let kit = ModKit.standard(home: home)
 let a = Array(CommandLine.arguments.dropFirst())
 if a.first == "deploy" {
+    guard a.count == 1 else { print("usage: skyrimmt-cli deploy   (deploys the current profile; takes no options)"); exit(2) }
     let p = try kit.currentProfile()
     let plan = try kit.plan(p)
     for (rel, why) in plan.hidden.sorted(by: { $0.key < $1.key }) { print("hidden: \(rel) — \(why)") }

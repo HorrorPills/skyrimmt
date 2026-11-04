@@ -10,6 +10,7 @@ public struct ToolPackage: Equatable {
     public let executable: String    // relative to the folder: present = installed
     public let url: URL
     public let sha256: String
+    public var unmarkedOK = false    // an install without a package mark (before 1.0.3) is this same build
 }
 
 public enum ToolPackageError: Error, CustomStringConvertible {
@@ -40,7 +41,7 @@ extension ModKit {
         var out: [String: ToolPackage] = [:]
         for d in defs {
             guard let u = kv[d.key + "_URL"].flatMap(URL.init(string:)), let sum = kv[d.key + "_SHA256"], !sum.isEmpty else { continue }
-            out[d.folder] = ToolPackage(name: d.name, folder: d.folder, executable: d.exe, url: u, sha256: sum.lowercased())
+            out[d.folder] = ToolPackage(name: d.name, folder: d.folder, executable: d.exe, url: u, sha256: sum.lowercased(), unmarkedOK: kv[d.key + "_UNMARKED_OK"] == "1")
         }
         return out
     }
@@ -49,9 +50,19 @@ extension ModKit {
         FileManager.default.isExecutableFile(atPath: home.appendingPathComponent("tools/\(p.folder)/\(p.executable)").path)
     }
 
-    /// Download, verify and unpack a package (no-op when installed). The archive holds one top folder `<folder>/`.
+    static let toolPackageMark = ".skyrimmt-package"
+    /// Installed and the very package this version of SkyrimMT pins (app updates can pin a newer build).
+    public func toolCurrent(_ p: ToolPackage) -> Bool {
+        guard toolInstalled(p) else { return false }
+        let mark = home.appendingPathComponent("tools/\(p.folder)/\(ModKit.toolPackageMark)")
+        guard let have = try? String(contentsOf: mark, encoding: .utf8) else { return p.unmarkedOK }
+        return have.trimmingCharacters(in: .whitespacesAndNewlines) == p.sha256
+    }
+
+    /// Download, verify and unpack a package (no-op when current; replaces an older build, whose failure leaves it in
+    /// place). The archive holds one top folder `<folder>/`.
     public func installToolPackage(_ p: ToolPackage) throws {
-        guard !toolInstalled(p) else { return }
+        guard !toolCurrent(p) else { return }
         let fm = FileManager.default
         let cache = home.appendingPathComponent("cache/tools"), tools = home.appendingPathComponent("tools")
         try fm.createDirectory(at: cache, withIntermediateDirectories: true)
@@ -80,12 +91,18 @@ extension ModKit {
         let unpacked = work.appendingPathComponent(p.folder)
         guard code == 0, fm.fileExists(atPath: unpacked.path) else { throw ToolPackageError.unpack(p.name) }
         _ = Installer.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", unpacked.path])
+        try p.sha256.write(to: unpacked.appendingPathComponent(ModKit.toolPackageMark), atomically: true, encoding: .utf8)
         let dst = tools.appendingPathComponent(p.folder)
+        // what the player set in the tool's own settings survives an update
+        for keep in ["Config.xml"] where fm.fileExists(atPath: dst.appendingPathComponent(keep).path) {
+            try? fm.removeItem(at: unpacked.appendingPathComponent(keep))
+            try? fm.copyItem(at: dst.appendingPathComponent(keep), to: unpacked.appendingPathComponent(keep))
+        }
         if fm.fileExists(atPath: dst.path) { try fm.moveItem(at: dst, to: tools.appendingPathComponent(".old-\(UUID().uuidString)")) }
         try fm.moveItem(at: unpacked, to: dst)
         for n in (try? fm.contentsOfDirectory(atPath: tools.path)) ?? [] where n.hasPrefix(".old-") { Installer.forceRemove(tools.appendingPathComponent(n)) }
         try? fm.removeItem(at: archive)   // unpacked: the archive isn't needed any more
-        guard toolInstalled(p) else { throw ToolPackageError.unpack(p.name) }
+        guard toolCurrent(p) else { throw ToolPackageError.unpack(p.name) }
     }
 
     static func sha256(of url: URL) throws -> String {

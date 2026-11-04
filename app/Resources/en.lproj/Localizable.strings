@@ -1,0 +1,3 @@
+/* English is the development language: every key equals its value.
+   This file exists so macOS picks English as the default instead of
+   falling back to another available localization (e.g. Swedish). */

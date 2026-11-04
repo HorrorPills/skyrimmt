@@ -59,6 +59,19 @@ loader_running(){ [ -n "$(loader_pids)" ]; }
 steam_running() { [ -n "$(win_pids 'steam\.exe')" ]; }
 keizaal_running(){ [ -n "$(win_pids 'keizaal-online\.exe')" ]; }   # Keizaal Online's launcher (scripts/keizaal.sh)
 server_up()     { pgrep -f "$SKYRIM_HOME/wine/.*wineserver" >/dev/null; }
+# Replacing Wine's files needs Wine stopped. Only its own background services running (the launcher's controller check
+# starts them): stop those, in this prefix only. Returns 1 when anything else runs (game, Steam, a tool).
+stop_idle_wine() {
+  server_up || return 0
+  local p name
+  for p in $(win_pids '.*\.exe'); do
+    name=$(LC_ALL=C ps -o command= -p "$p" 2>/dev/null | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -E 's/\.exe.*//; s/.*[\\/]//')
+    case "$name" in services|plugplay|svchost|rpcss|winedevice|wineboot|explorer|conhost|start|xinputprobe|"") ;; *) return 1 ;; esac
+  done
+  "$WINESERVER" -k 2>/dev/null
+  local i; for i in 1 2 3 4 5 6 7 8 9 10; do server_up || return 0; sleep 1; done
+  return 1
+}
 
 # tf2mt's Steam (same Steam account → "playing on another device" conflicts, PLAN §4.2). Never kill it from here:
 # the launcher offers to close that session through tf2mt's own scripts/session-end.sh.

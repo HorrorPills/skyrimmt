@@ -31,7 +31,7 @@ AUDP="$SKYRIMMT_ROOT/tools/wine-patches/mmdevapi_buffer.sh"
 # Audio mix rate (CrossOver's "audio sample rate"): Wine reports this rate instead of the device's, macOS converts.
 # 96 kHz by default — 44.1 kHz devices crackle otherwise. Launcher Game tab → config/audio-mix-rate ("device" = Wine's own).
 RATEP="$SKYRIMMT_ROOT/tools/wine-patches/coreaudio_rate.sh"
-mix=$(tr -d '[:space:]' < "$SKYRIM_HOME/config/audio-mix-rate" 2>/dev/null); mix=${mix:-96000}
+mix=$(cat "$SKYRIM_HOME/config/audio-mix-rate" 2>/dev/null | tr -d '[:space:]'); mix=${mix:-96000}
 if [ "$mix" = device ]; then
   [ "$(SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" status)" = original ] || SKYRIM_HOME="$SKYRIM_HOME" /bin/bash "$RATEP" revert >/dev/null
 else
@@ -81,7 +81,7 @@ done
 # on Windows often ship bBorderless=0, a bordered window). Size from the launcher's Game tab (config/window-size):
 # "fit" (default) = the screen, "WxH" = that size (never larger than the screen), "keep" = the profile's INI as is.
 prefs="$MYGAMES_DIR/SkyrimPrefs.ini"
-wsize=$(tr -d '[:space:]' < "$SKYRIM_HOME/config/window-size" 2>/dev/null); wsize=${wsize:-fit}
+wsize=$(cat "$SKYRIM_HOME/config/window-size" 2>/dev/null | tr -d '[:space:]'); wsize=${wsize:-fit}
 if [ -f "$prefs" ] && [ "$wsize" != keep ]; then
   . "$SKYRIMMT_ROOT/scripts/ini.sh"
   [ "$(ini_get "$prefs" Display bBorderless)" = 1 ] || ini_set "$prefs" Display bBorderless 1
@@ -96,6 +96,20 @@ if [ -f "$prefs" ] && [ "$wsize" != keep ]; then
     [ "$(ini_get "$prefs" Display "iSize W")" = "$ww" ] || ini_set "$prefs" Display "iSize W" "$ww"
     [ "$(ini_get "$prefs" Display "iSize H")" = "$wh" ] || ini_set "$prefs" Display "iSize H" "$wh"
   fi
+fi
+
+# Creations catalog (AppData/Local/.../ContentCatalog.txt) per game version: 1.7.x writes a newer format that older
+# builds can't read ("invalid stoull argument" at start-up, found 2026-10-19 with a 1.6.1170 profile). The file of
+# the version that wrote it is kept as ContentCatalog.<version>.txt and put back when that version runs again.
+cver=$("$SKYRIMMT_ROOT/scripts/settings.sh" status 2>/dev/null | sed -n 's/^game_version=//p')
+cfam=$(echo "$cver" | cut -d. -f1-2)                           # 1.6 / 1.7: the format changed between families
+cat_live="$LOCALAPPDATA_DIR/ContentCatalog.txt"; cat_mark="$LOCALAPPDATA_DIR/ContentCatalog.family"
+if [ -n "$cfam" ]; then
+  cown=$(cat "$cat_mark" 2>/dev/null)
+  [ -z "$cown" ] && [ -f "$cat_live" ] && { grep -q '"CSV2_' "$cat_live" && cown=1.7 || cown=$cfam; }   # unmarked file
+  if [ -f "$cat_live" ] && [ -n "$cown" ] && [ "$cown" != "$cfam" ]; then mv -f "$cat_live" "$LOCALAPPDATA_DIR/ContentCatalog.$cown.txt"; fi
+  [ ! -f "$cat_live" ] && [ -f "$LOCALAPPDATA_DIR/ContentCatalog.$cfam.txt" ] && mv -f "$LOCALAPPDATA_DIR/ContentCatalog.$cfam.txt" "$cat_live"
+  echo "$cfam" > "$cat_mark"
 fi
 
 cd "$GAMEDIR" || exit 1

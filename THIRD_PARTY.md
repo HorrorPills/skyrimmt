@@ -12,7 +12,7 @@ v0.1.0 release; URL + SHA-256 in `config/release.conf`). Setup clones a local tf
 | Wine (Sikarugir build, wine-staging based) | 10.0 (`WS12WineSikarugir10.0_6`) | LGPL-2.1-or-later | https://gitlab.winehq.org/wine/wine · https://github.com/Sikarugir-App |
 | DXVK | 2.4.1 | zlib | https://github.com/doitsujin/dxvk |
 | MoltenVK | 1.4.1 | Apache-2.0 | https://github.com/KhronosGroup/MoltenVK |
-| DXMT | as bundled (d3d11.dll dated 2025-07-10; exact version to be confirmed in M1) | LGPL-2.1 | https://github.com/3Shain/dxmt |
+| DXMT | 9839e55 (unmodified CI build, attached to the release; [source](https://github.com/3Shain/dxmt/tree/9839e55f98d4aca103957ee4132d6395a325a9ed)) | LGPL-2.1 | https://github.com/3Shain/dxmt |
 | vkd3d | bundled with Wine | LGPL-2.1-or-later | https://gitlab.winehq.org/wine/vkd3d |
 
 **Audio mix rate:** `tools/wine-patches/coreaudio_rate.sh` changes one instruction in Wine's `winecoreaudio.so`

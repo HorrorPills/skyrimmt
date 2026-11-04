@@ -368,6 +368,65 @@ index 22e1b9b..b8d16ca 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/jackify-engine/Verbs/DownloadModlist.cs b/jackify-engine/Verbs/DownloadModlist.cs
+index 22656e2..ed48239 100644
+--- a/jackify-engine/Verbs/DownloadModlist.cs
++++ b/jackify-engine/Verbs/DownloadModlist.cs
+@@ -87,13 +87,14 @@ public class DownloadWabbajackFile
+         var started = DateTime.UtcNow;
+         var totalMB = archive.Size / 1024.0 / 1024.0;
+         var samples = new System.Collections.Generic.Queue<(DateTime time, long bytes)>();
++        var samplesLock = new object();   // SkyrimMT: parts download in parallel, the queue isn't thread-safe
+         const double sampleWindowSeconds = 3.0; // 3-second rolling window for smoothing
+         
+         // Initialize with existing file size if resuming
+         long initialBytes = output.FileExists() ? output.Size() : 0;
+         if (initialBytes > 0)
+         {
+-            samples.Enqueue((DateTime.UtcNow, initialBytes));
++            lock (samplesLock) samples.Enqueue((DateTime.UtcNow, initialBytes));
+         }
+         
+         // Update display periodically from samples
+@@ -108,6 +109,10 @@ public class DownloadWabbajackFile
+                     
+                     var now = DateTime.UtcNow;
+                     
++                    double speedMBps = 0;
++                    long currentBytes = initialBytes;
++                    lock (samplesLock)
++                    {
+                     // Remove samples older than our window
+                     var cutoffTime = now.AddSeconds(-sampleWindowSeconds);
+                     while (samples.Count > 0 && samples.Peek().time < cutoffTime)
+@@ -116,8 +121,6 @@ public class DownloadWabbajackFile
+                     }
+                     
+                     // Calculate speed from samples in window (oldest to newest)
+-                    double speedMBps = 0;
+-                    long currentBytes = initialBytes;
+                     if (samples.Count >= 2)
+                     {
+                         var oldest = samples.Peek();
+@@ -137,7 +140,8 @@ public class DownloadWabbajackFile
+                     {
+                         currentBytes = samples.Peek().bytes;
+                     }
+-                    
++                    }
++
+                     var processedMB = currentBytes / 1024.0 / 1024.0;
+                     ConsoleOutput.PrintProgressWithDuration($"Downloading .wabbajack ({processedMB:F1}/{totalMB:F1}MB) - {speedMBps:F1}MB/s");
+                 }
+@@ -154,7 +158,7 @@ public class DownloadWabbajackFile
+             await _dispatcher.Download(archive, output, token, (processed, total) =>
+             {
+                 // Add sample from callback (this is the accurate bytes downloaded)
+-                samples.Enqueue((DateTime.UtcNow, processed));
++                lock (samplesLock) samples.Enqueue((DateTime.UtcNow, processed));
+             }, null);
+         }
+         finally
 diff --git a/jackify-engine/Verbs/Install.cs b/jackify-engine/Verbs/Install.cs
 index 9f05c3d..ebe9c9b 100644
 --- a/jackify-engine/Verbs/Install.cs

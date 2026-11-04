@@ -68,15 +68,24 @@ extension ModKit {
         let p = Process()
         p.executableURL = e.engine
         p.currentDirectoryURL = e.engine.deletingLastPathComponent()
-        p.arguments = ["download-wabbajack-file", "-m", machineURL, "-o", out.path]
+        let part = out.appendingPathExtension("part")
+        try? FileManager.default.removeItem(at: part)
+        p.arguments = ["download-wabbajack-file", "-m", machineURL, "-o", part.path]
         var env = ProcessInfo.processInfo.environment
         env["JACKIFY_DATA_DIR"] = wabbajackDir.appendingPathComponent("data").path
         p.environment = env
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        let log = dir.appendingPathComponent("download.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        let h = try FileHandle(forWritingTo: log); defer { try? h.close() }
+        p.standardOutput = h; p.standardError = h
         try p.run(); p.waitUntilExit()
-        guard p.terminationStatus == 0, FileManager.default.fileExists(atPath: out.path) else {
-            throw WabbajackError.failed("couldn't download the list file for \(machineURL)")
+        guard p.terminationStatus == 0, FileManager.default.fileExists(atPath: part.path) else {
+            try? FileManager.default.removeItem(at: part)
+            let last = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(whereSeparator: \.isNewline).last { $0.hasPrefix("Error:") }
+            throw WabbajackError.failed("couldn't download the list file for \(machineURL)" + (last.map { " (\($0))" } ?? ""))
         }
+        try? FileManager.default.removeItem(at: out)
+        try FileManager.default.moveItem(at: part, to: out)
         return out
     }
 }

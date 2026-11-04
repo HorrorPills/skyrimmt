@@ -34,7 +34,15 @@ else
 fi
 
 step "Wine runtime ($SKYRIM_HOME/wine)"
-if [ -x "$WINE" ]; then skip "present ($("$WINE" --version 2>/dev/null))"
+have_rt=$(cat "$SKYRIM_HOME/wine/version" 2>/dev/null)
+replace_rt=0
+if [ -x "$WINE" ] && [ -n "${RUNTIME_VERSION:-}" ] && [ "$have_rt" != "$RUNTIME_VERSION" ]; then
+  # this SkyrimMT ships a different runtime than the one installed (app update): replace it. DXMT, the Wine patches and the
+  # prefix's DXMT copies are redone by the steps below; the prefix, Steam and Skyrim stay.
+  stop_idle_wine || { echo "TODO quit Skyrim and Steam, then run setup again (runtime ${have_rt:-unknown} → $RUNTIME_VERSION can't replace a running Wine)"; exit 0; }
+  replace_rt=1
+fi
+if [ -x "$WINE" ] && [ "$replace_rt" = 0 ]; then skip "present ($("$WINE" --version 2>/dev/null))"
 else
   stage="$SKYRIM_HOME/wine.part"; rm -rf "$stage"
   if [ -z "$RUNTIME_SRC" ] && [ -x "$TF2_RUNTIME/bin/wine" ] && [ "$(cat "$TF2_RUNTIME/version" 2>/dev/null)" = "${RUNTIME_VERSION:-}" ]; then
@@ -46,6 +54,7 @@ else
     tf2orig="${TF2_HOME:-$HOME/Games/tf2}/backups/winemac.so.orig"
     [ -f "$tf2orig" ] && ! cmp -s "$tf2orig" "$stage/$so" && { cp "$tf2orig" "$stage/$so.new" && mv -f "$stage/$so.new" "$stage/$so"; }
     rm -f "$stage/lib/wine/x86_64-windows/tf2mt.dll" "$stage/lib/wine/x86_64-unix/tf2mt.so"   # tf2mt renderer, if a session left it
+    [ "$replace_rt" = 1 ] && mv "$SKYRIM_HOME/wine" "$SKYRIM_HOME/wine.old"
     mv "$stage" "$SKYRIM_HOME/wine"
     how="cloned from tf2mt ($TF2_RUNTIME)"
   else
@@ -63,8 +72,13 @@ else
       echo "$RUNTIME_SHA256  $tarball" | shasum -a 256 -c - >/dev/null || fail "runtime checksum mismatch"
     fi
     mkdir -p "$stage.x" && tar -xJf "$tarball" -C "$stage.x" || { rm -rf "$stage.x"; fail "could not unpack $tarball"; }
+    [ "$replace_rt" = 1 ] && mv "$SKYRIM_HOME/wine" "$SKYRIM_HOME/wine.old"
     mv "$stage.x/wine" "$SKYRIM_HOME/wine" && rm -rf "$stage.x"
     how="unpacked $(basename "$tarball")"
+  fi
+  if [ "$replace_rt" = 1 ]; then
+    if [ -x "$WINE" ]; then rm -rf "$SKYRIM_HOME/wine.old"; how="runtime updated ${have_rt:-?} → ${RUNTIME_VERSION}; $how"
+    else rm -rf "$SKYRIM_HOME/wine"; mv "$SKYRIM_HOME/wine.old" "$SKYRIM_HOME/wine"; fail "new runtime unusable — kept the previous one"; fi
   fi
   xattr -dr com.apple.quarantine "$SKYRIM_HOME/wine" 2>/dev/null
   [ -x "$WINE" ] && ok "$how ($("$WINE" --version))" || fail "runtime installed but $WINE missing"
@@ -74,7 +88,7 @@ step "Metal renderer (DXMT ${DXMT_VERSION:-from the runtime})"   # before the pr
 case $("$SKYRIMMT_ROOT/scripts/dxmt.sh" status) in
   up-to-date) skip "installed" ;;
   outdated*)
-    if server_up; then todo "quit Skyrim and Steam, then run setup again (DXMT can't be replaced while Wine runs)"
+    if ! stop_idle_wine; then todo "quit Skyrim and Steam, then run setup again (DXMT can't be replaced while Wine runs)"
     else out=$("$SKYRIMMT_ROOT/scripts/dxmt.sh" install) && ok "$out" || fail "$out"; fi ;;
   *) fail "no Wine runtime" ;;
 esac

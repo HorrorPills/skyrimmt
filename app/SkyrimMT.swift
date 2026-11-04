@@ -243,7 +243,12 @@ final class Launcher: ObservableObject {
     private var ticks = 0
 
     /// Everything required to play (the mouse fix is recommended, not required).
-    var readyToPlay: Bool { !checks.isEmpty && checks.filter { $0.id != "mouse" }.allSatisfy(\.ok) }
+    /// Can the game start at all? An outdated runtime or DXMT still runs, and missing game files are the player's call:
+    /// those warn on the Setup tab, a failed update must never lock anyone out. Not while setup replaces files.
+    var readyToPlay: Bool {
+        !checks.isEmpty && !setupRunning && exists(Paths.wine)
+            && checks.filter { !["mouse", "wine", "dxmt", "gamefiles"].contains($0.id) }.allSatisfy(\.ok)
+    }
     var setupComplete: Bool { !checks.isEmpty && checks.allSatisfy(\.ok) }
     var everLoggedIn: Bool { ((try? String(contentsOfFile: Paths.connectionLog, encoding: .utf8)) ?? "").contains("Logged On") }
     var skyrimInstalled: Bool {
@@ -256,7 +261,11 @@ final class Launcher: ObservableObject {
         Session.markLauncherRunning()
         Task.detached { Session.ensureHelper() }
         refresh()
-        refreshPatches(); refreshSettings()
+        refreshPatches { [weak self] in self?.repairAfterUpdate() }; refreshSettings()
+        pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in Task { @MainActor in self?.updatePointer() } }
+        pointerObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.updatePointer() }
+        }
         refreshChecks()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -282,7 +291,9 @@ final class Launcher: ObservableObject {
                 return (b["Width"] ?? 0) >= 300 && (b["Height"] ?? 0) >= 200   // not tray menus or tooltips
             }
             await MainActor.run {
+                let wasRunning = self.gameRunning
                 self.gameRunning = kv["game"] == "1"
+                if self.gameRunning && !wasRunning { self.gamePIDs = games; self.focusGame() }
                 self.loaderRunning = kv["loader"] == "1"
                 self.keizaalInstalled = exists(Paths.keizaalExe)
                 let keizaal = kv["keizaal"] == "1"
@@ -316,7 +327,8 @@ final class Launcher: ObservableObject {
         }
     }
 
-    func refreshPatches() {
+    /// Reads the real state of the patches and DXMT, then re-evaluates the checks; `then` runs with the fresh result.
+    func refreshPatches(then: (@MainActor () -> Void)? = nil) {
         Task.detached {
             func state(_ tool: String) -> PatchState {
                 guard exists(tool), exists(Paths.wine) else { return .unknown }
@@ -325,7 +337,9 @@ final class Launcher: ObservableObject {
                 return out.hasPrefix("patched") || out.hasPrefix("upstream") ? .applied : out.hasPrefix("original") ? .original : .unknown
             }
             let m = state(Paths.mousePatch), c = state(Paths.dxmtPatch)
-            await MainActor.run { self.mouseFix = m; self.crashFix = c; self.refreshChecks(); self.checksKnown = true }
+            let d = shell(["/bin/bash", Paths.script("dxmt.sh"), "status"]).output.hasPrefix("up-to-date")
+            let g = shell(["/bin/bash", Paths.script("gamefiles.sh"), "status"]).output.split(separator: "\n").map(String.init)
+            await MainActor.run { self.mouseFix = m; self.crashFix = c; self.dxmtCurrent = d; self.missingGameFiles = g; self.refreshChecks(); self.checksKnown = true; then?() }
         }
     }
 
@@ -335,26 +349,36 @@ final class Launcher: ObservableObject {
         return conf.split(separator: "\n").first { $0.hasPrefix("DXMT_VERSION=") }
             .map { String($0.dropFirst("DXMT_VERSION=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")) }?.nonEmpty
     }
-    /// The pinned DXMT is the one installed (wine/.dxmt-build, written by scripts/dxmt.sh).
-    var dxmtCurrent: Bool {
-        guard let pinned = Launcher.pinnedDXMT else { return true }
-        return (try? String(contentsOfFile: Paths.game + "/wine/.dxmt-build", encoding: .utf8))?
+    /// Runtime version this SkyrimMT ships (config/release.conf RUNTIME_VERSION); nil: not pinned.
+    static var pinnedRuntime: String? {
+        let conf = (try? String(contentsOfFile: Paths.releaseConf, encoding: .utf8)) ?? ""
+        return conf.split(separator: "\n").first { $0.hasPrefix("RUNTIME_VERSION=") }
+            .map { String($0.dropFirst("RUNTIME_VERSION=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")) }?.nonEmpty
+    }
+    var runtimeCurrent: Bool {
+        guard let pinned = Launcher.pinnedRuntime, exists(Paths.wine) else { return true }
+        return (try? String(contentsOfFile: Paths.game + "/wine/version", encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) == pinned
     }
+    /// Skyrim's own files that are gone from the folder Play uses (scripts/gamefiles.sh).
+    @Published var missingGameFiles: [String] = []
+    private var restoringGameFiles = false
+    /// The pinned DXMT is what the runtime and the prefix really hold (scripts/dxmt.sh status).
+    @Published var dxmtCurrent = true
 
     func refreshChecks() {
         isGOG = Paths.isGOG
         checks = [
             SetupCheck(id: "rosetta", title: "Rosetta 2", ok: exists(Paths.rosetta),
                        fix: "Click “Run setup” (or: softwareupdate --install-rosetta --agree-to-license)."),
-            SetupCheck(id: "wine", title: "Wine runtime", ok: exists(Paths.wine),
-                       fix: "Click “Run setup” — downloads the runtime (Wine 10 + DXMT, ~230 MB)."),
+            SetupCheck(id: "wine", title: "Wine runtime" + (Launcher.pinnedRuntime.map { " (\($0))" } ?? ""), ok: exists(Paths.wine) && runtimeCurrent,
+                       fix: "Click “Re-check” (or “Set up everything”) with Skyrim and Steam closed — downloads the runtime (Wine 10 + DXMT, ~230 MB)."),
             SetupCheck(id: "prefix", title: "Wine environment", ok: exists(Paths.prefix + "/system.reg"),
                        fix: "Created by “Run setup”."),
             SetupCheck(id: "crashfix", title: "Skyrim fix for the Metal renderer", ok: crashFix == .applied,
                        fix: "Applied by “Run setup” (without it Skyrim quits after the logo)."),
             SetupCheck(id: "dxmt", title: "Metal renderer (DXMT \(Launcher.pinnedDXMT ?? "runtime"))", ok: dxmtCurrent,
-                       fix: "Click “Run setup” with Skyrim and Steam closed: updates DXMT (no more black shadows following characters)."),
+                       fix: "Click “Re-check” (or “Set up everything”) with Skyrim and Steam closed: updates DXMT (no more black shadows following characters)."),
         ] + (isGOG ? [
             SetupCheck(id: "skyrim", title: "Skyrim Anniversary Edition installed (GOG)", ok: skyrimInstalled,
                        fix: "Click “Install from GOG…” and choose the folder with your GOG installers (≈27 GB)."),
@@ -366,6 +390,8 @@ final class Launcher: ObservableObject {
             SetupCheck(id: "skyrim", title: "Skyrim Special Edition installed", ok: skyrimInstalled,
                        fix: "Click “Install Skyrim” (needs a Steam account that owns it; ≈16 GB)."),
         ]) + [
+            SetupCheck(id: "gamefiles", title: "Skyrim game files complete", ok: missingGameFiles.isEmpty,
+                       fix: localizedFormat(missingGameFiles.count == 1 ? "%ld file is missing (%@). Skyrim crashes when loading a game. Click “Re-check” to restore it." : "%ld files are missing (%@). Skyrim crashes when loading a game. Click “Re-check” to restore them.", missingGameFiles.count, missingGameFiles.prefix(3).joined(separator: ", "))),
             SetupCheck(id: "mouse", title: "Smooth mouse fix", ok: mouseFix == .applied,
                        fix: mouseFix == .unknown ? "Needs the SkyrimMT runtime (the patch matches that exact Wine build)."
                                                  : "Turn on “Smooth mouse fix” in the Game tab or click “Run setup”."),
@@ -401,8 +427,29 @@ final class Launcher: ObservableObject {
 
     func setUpEverything() {
         autoSetup = true; autoLoginStarted = false; autoInstallStarted = false
-        let base = ["rosetta", "wine", "prefix", "crashfix"] + (isGOG ? [] : ["steam"])
-        if checks.filter({ base.contains($0.id) }).allSatisfy(\.ok) { continueSetup() } else { runSetupInteractive() }
+        NotificationCenter.default.post(name: .updateInstalledTools, object: nil)
+        refreshPatches { [weak self] in
+            guard let self else { return }
+            if self.checks.filter({ Launcher.setupFixes(self.isGOG).contains($0.id) }).allSatisfy(\.ok) { self.continueSetup() } else { self.runSetupInteractive() }
+        }
+    }
+
+    /// What scripts/setup.sh installs or repairs.
+    static func setupFixes(_ gog: Bool) -> [String] { ["rosetta", "wine", "prefix", "crashfix", "dxmt"] + (gog ? [] : ["steam"]) }
+
+    /// First launch after an app update: this version may pin a newer runtime, DXMT or tools. An existing setup is
+    /// brought up to date without asking; a first install is left to the Setup tab.
+    private func repairAfterUpdate() {
+        let mark = Paths.game + "/config/app-version"
+        let now = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+        let last = (try? String(contentsOfFile: mark, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard exists(Paths.prefix + "/system.reg") else { return }
+        if last != now {
+            try? (now + "\n").write(toFile: mark, atomically: true, encoding: .utf8)
+            NotificationCenter.default.post(name: .updateInstalledTools, object: nil)
+        }
+        let stale = checks.contains { ["wine", "dxmt"].contains($0.id) && !$0.ok } || crashFix == .original
+        if stale { recheckAndFix() }
     }
 
     /// Next step of the one-click setup (called after setup.sh and on every status tick).
@@ -454,7 +501,11 @@ final class Launcher: ObservableObject {
                 self.message = code == 0 ? "Setup finished." : "Setup stopped. See the log above."
                 if code != 0 { self.autoSetup = false }
                 self.artVersion += 1
-                self.refreshPatches(); self.refreshSettings(); self.refresh()
+                self.refreshSettings(); self.refresh()
+                self.refreshPatches { [weak self] in   // "finished" only if it really brought everything up to date
+                    guard let self, code == 0, self.checks.contains(where: { ["wine", "dxmt"].contains($0.id) && !$0.ok }) else { return }
+                    self.message = localized("Quit Skyrim and Steam, then click Re-check to finish updating.")
+                }
             }
         })
         if !started { setupRunning = false; setupLog = ["FAIL couldn't start setup.sh"] }
@@ -471,6 +522,45 @@ final class Launcher: ObservableObject {
         panel.message = localized("Choose the runtime (tf2mt-runtime-*.tar.xz) downloaded from the release page")
         panel.allowedContentTypes = [UTType(filenameExtension: "xz") ?? .data]
         if panel.runModal() == .OK, let url = panel.url { runSetup(runtimeFile: url.path) }
+    }
+
+    /// Re-check: every component against what this version pins; anything missing or outdated is installed.
+    func recheckAndFix() {
+        message = localized("Checking…")
+        refreshSettings()
+        NotificationCenter.default.post(name: .updateInstalledTools, object: nil)
+        refreshPatches { [weak self] in
+            guard let self else { return }
+            self.refresh()
+            guard self.checks.contains(where: { Launcher.setupFixes(self.isGOG).contains($0.id) && !$0.ok }) else {
+                if self.missingGameFiles.isEmpty { self.message = localized("All checks verified.") } else { self.restoreGameFiles() }
+                return
+            }
+            guard !self.gameRunning, self.steam == .stopped else {
+                self.message = localized("Quit Skyrim and Steam first to update components.")
+                return
+            }
+            self.message = localized("Verifying and updating setup…")
+            self.runSetupInteractive()
+        }
+    }
+
+    /// Steam verifies the game and downloads what's missing; the check clears by itself when the files are back.
+    func restoreGameFiles() {
+        guard !restoringGameFiles else { return }
+        restoringGameFiles = true
+        Session.ensureHelper()
+        Task {
+            let r = await Task.detached { shell(["/bin/bash", Paths.script("gamefiles.sh"), "repair"]) }.value
+            self.message = r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            for _ in 0..<720 {   // up to 2 hours
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                let left = await Task.detached { shell(["/bin/bash", Paths.script("gamefiles.sh"), "status"]).output.split(separator: "\n").map(String.init) }.value
+                self.missingGameFiles = left; self.refreshChecks()
+                if left.isEmpty { self.message = localized("Skyrim's game files are restored."); break }
+            }
+            self.restoringGameFiles = false
+        }
     }
 
     func loginSteam() {
@@ -744,6 +834,92 @@ final class Launcher: ObservableObject {
                 self.refresh()
             }
         }
+    }
+
+    /// Double cursor fix. Skyrim draws its own cursor and asks Wine to hide the Mac pointer, but that doesn't hold: macOS
+    /// ignores a hide from an app that isn't active, and it comes back after window changes and menus (measured
+    /// 2026-11-04). So the launcher hides the pointer itself while the game is the front app (updatePointer), and brings
+    /// the game forward when its window is up. Skipped if the player has moved to another app.
+    func focusGame() {
+        guard !focusingGame else { return }
+        focusingGame = true
+        Task { @MainActor in
+            defer { focusingGame = false }
+            func sleep(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }
+            func window(_ pids: [pid_t]) -> pid_t? {
+                let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+                return list.lazy.compactMap { w -> pid_t? in
+                    guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, pids.contains(pid), (w[kCGWindowLayer as String] as? Int) == 0,
+                          let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Width"] ?? 0) >= 300, (b["Height"] ?? 0) >= 200 else { return nil }
+                    return pid
+                }.first
+            }
+            var game: pid_t?
+            for _ in 0..<480 where game == nil {   // a big mod list can take minutes to open its window
+                guard self.gameRunning else { return }
+                game = window(self.gamePIDs)
+                if game == nil { await sleep(0.25) }
+            }
+            guard let game else { return }
+            let me = ProcessInfo.processInfo.processIdentifier
+            func playerStayed() -> Bool { [game, me].contains(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) }
+            guard playerStayed() else { return }
+            _ = Launcher.bringToFront(game)
+            guard !Launcher.canHidePointer else { return }
+            // no window server support: one alt-tab for the player, which makes Wine's own hide apply
+            await sleep(Launcher.cursorSettle)
+            guard self.gameRunning, playerStayed() else { return }
+            _ = Launcher.bringToFront(me)
+            await sleep(0.4)
+            guard self.gameRunning else { return }
+            _ = Launcher.bringToFront(game)
+        }
+    }
+    private var focusingGame = false
+    /// Seconds from the game's window to the alt-tab: by then it has asked for the hide (window up → request: under 5 s).
+    static let cursorSettle = 8.0
+    static let canHidePointer: Bool = {
+        guard let conn = systemFunction("_CGSDefaultConnection", as: CGSDefaultConnectionFn.self),
+              let set = systemFunction("CGSSetConnectionProperty", as: CGSSetPropertyFn.self) else { return false }
+        let c = conn()
+        return set(c, c, "SetsCursorInBackground" as CFString, kCFBooleanTrue) == 0
+    }()
+    private var pointerHidden = false
+    private var pointerTimer: Timer?
+    private var pointerObserver: NSObjectProtocol?
+    /// Hidden only while the game is in front and no system overlay is up. A hide ends with this process, so a quit or
+    /// crash of the launcher can't leave the Mac without a pointer. Runs in the launcher: no effect on the game's input.
+    func updatePointer() {
+        guard Launcher.canHidePointer, gameRunning || pointerHidden else { return }
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+        let want = gameRunning && gamePIDs.contains(front) && !Launcher.systemOverlayUp()
+        if want && pointerHidden {   // Wine shows and sets the pointer again at window edges and after focus changes
+            CGDisplayShowCursor(CGMainDisplayID()); CGDisplayHideCursor(CGMainDisplayID())
+            return
+        }
+        guard want != pointerHidden else { return }
+        pointerHidden = want
+        if want { CGDisplayHideCursor(CGMainDisplayID()) } else { CGDisplayShowCursor(CGMainDisplayID()) }
+    }
+    /// Spotlight and Notification Center take the pointer without changing the front app. Mission Control can't be told
+    /// apart from these windows: the pointer stays hidden there until it closes.
+    static func systemOverlayUp() -> Bool {
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        return list.contains { w in
+            guard let owner = w[kCGWindowOwnerName as String] as? String, let layer = w[kCGWindowLayer as String] as? Int, layer > 0,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Height"] ?? 0) >= 100, (b["Width"] ?? 0) >= 100 else { return false }
+            return ["Spotlight", "Notification Center", "Control Center"].contains(owner)   // not Dock: it always has a full-screen window
+        }
+    }
+
+    /// The call behind Cmd-Tab: needs no permission, unlike System Events. NSRunningApplication.activate no longer
+    /// brings another app forward since macOS 14.
+    static func bringToFront(_ pid: pid_t) -> Bool {
+        var psn = ProcessSerialNumber()
+        guard let get = systemFunction("GetProcessForPID", as: GetProcessForPIDFn.self),
+              let set = systemFunction("SetFrontProcessWithOptions", as: SetFrontProcessFn.self),
+              get(pid, &psn) == noErr else { return false }
+        return set(&psn, 1) == noErr   // 1: kSetFrontProcessFrontWindowOnly
     }
 
     func quitSkyrim() {
@@ -1046,6 +1222,7 @@ final class Updater: ObservableObject {
 extension Notification.Name {
     static let openModManager = Notification.Name("SkyrimMT.openModManager")
     static let openModManagerEssentials = Notification.Name("SkyrimMT.openModManagerEssentials")
+    static let updateInstalledTools = Notification.Name("SkyrimMT.updateInstalledTools")
 }
 
 extension Color {
@@ -1269,6 +1446,7 @@ struct ContentView: View {
         .frame(width: 980, height: 690 + keizaalRow)          // window adds the 32 pt title-bar inset on top
         .animation(.easeInOut(duration: 0.2), value: launcher.message)
         .onReceive(NotificationCenter.default.publisher(for: .openModManager)) { _ in openWindow(id: "mods") }
+        .onReceive(NotificationCenter.default.publisher(for: .updateInstalledTools)) { _ in mods.updateInstalledTools() }
         .onReceive(NotificationCenter.default.publisher(for: .openModManagerEssentials)) { _ in
             if !mods.missingEssentials.isEmpty { mods.section = .essentials; openWindow(id: "mods") }
         }
@@ -1682,7 +1860,9 @@ struct ContentView: View {
                     .buttonStyle(SmallButtonStyle()).frame(width: 76).disabled(target == Paths.game)
                     .help("Closes Skyrim and Steam, then restarts SkyrimMT on this folder")
             }
-            Button("Re-check") { launcher.refreshPatches(); launcher.refreshSettings(); launcher.refresh() }.buttonStyle(SmallButtonStyle())
+            Button("Re-check") {
+                launcher.recheckAndFix()
+            }.buttonStyle(SmallButtonStyle())
             Divider().overlay(Color.white.opacity(0.06))
             updatesSection
         }
@@ -1808,6 +1988,16 @@ struct QRView: View {
         }
     }
 }
+
+// Process Manager, deprecated but the only permission-free way to bring another app forward (Launcher.bringToFront)
+// Looked up at run time, so a macOS without one of them only loses that feature (the app still opens).
+private func systemFunction<T>(_ name: String, as type: T.Type) -> T? {
+    dlsym(UnsafeMutableRawPointer(bitPattern: -2), name).map { unsafeBitCast($0, to: type) }   // RTLD_DEFAULT
+}
+private typealias CGSDefaultConnectionFn = @convention(c) () -> Int32
+private typealias CGSSetPropertyFn = @convention(c) (Int32, Int32, CFString, CFTypeRef) -> Int32
+private typealias GetProcessForPIDFn = @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
+private typealias SetFrontProcessFn = @convention(c) (UnsafePointer<ProcessSerialNumber>, UInt32) -> OSStatus
 
 @main
 struct SkyrimMTApp: App {

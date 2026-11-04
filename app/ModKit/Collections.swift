@@ -244,6 +244,7 @@ public struct InstalledCollection: Codable, Equatable {
     public var modIDs: [String]          // ModRecord ids installed by this collection
     public var gameVersion: String?      // the Skyrim version the collection runs on (from the SKSE it ships)
     public var failed: [String]? = nil   // names that didn't install (Repair retries them)
+    public var reused: [String]? = nil   // already-installed mods it uses: the collection's, but not removed with it
 }
 
 public struct CollectionDiff: Equatable {
@@ -277,10 +278,13 @@ extension ModKit {
         let profileName = earlierInstall.flatMap { profile($0.profile) != nil ? $0.profile : nil } ?? ModKit.sanitize(info.name.isEmpty ? info.slug : info.name)
         // what the player added to the collection's profile (and generated output) survives an update
         let before = profile(profileName)
-        let collectionMods = Set(earlierInstall?.modIDs ?? [])
+        let collectionMods = Set((earlierInstall?.modIDs ?? []) + (earlierInstall?.reused ?? []))
         let extras = (before?.mods ?? []).filter { !collectionMods.contains($0.id) }
+        // another file of a mod the collection ships would be a second copy of it: kept, but off (issue #8)
+        let collectionNexusMods = Set(items.compactMap(\.modID))
+        func duplicatesCollection(_ id: String) -> Bool { mod(id)?.nexus.map { collectionNexusMods.contains($0.modID) } ?? false }
         var extraPlugins: [LoadOrderEntry] = []
-        for e in extras { if let m = mod(e.id) {
+        for e in extras where !duplicatesCollection(e.id) { if let m = mod(e.id) {
             let names = Set(((try? FileManager.default.contentsOfDirectory(atPath: stagingFolder(m).path)) ?? []).map { $0.lowercased() })
             extraPlugins += (before?.loadOrder ?? []).filter { names.contains($0.name.lowercased()) }
         } }
@@ -302,7 +306,7 @@ extension ModKit {
         var p = try currentProfile(); p.mods = []; if let v = profile(profileName)?.gameVersion { p.gameVersion = v }; try saveProfile(p)
         let dl = NexusDownloader(client: client, folder: home.appendingPathComponent("downloads"))
         var ids: [Int: String] = [:]          // item index → ModRecord id
-        var installedHere: [String] = []
+        var installedHere: [String] = [], reusedHere: [String] = []
         var deferred: [(Int, URL)] = []      // FOMODs whose conditions need mods installed later in this run
         var gameVersion = gameVersion
         var detectedVersion: String?
@@ -388,7 +392,7 @@ extension ModKit {
                 continue
             }
             if let existing = mods.first(where: { $0.nexus?.modID == mid && $0.nexus?.fileID == fid }) {
-                ids[i] = existing.id; progress(i, .reused)
+                ids[i] = existing.id; reusedHere.append(existing.id); progress(i, .reused)
                 if mid == 30379, let v = skseVersion(existing.id) { detectedVersion = v; gameVersion = v }
                 continue
             }
@@ -425,7 +429,10 @@ extension ModKit {
         p.mods = order.compactMap { item in items.firstIndex(of: item).flatMap { ids[$0] } }.reduce(into: [ProfileMod]()) { r, id in
             if !r.contains(where: { $0.id == id }) { r.append(ProfileMod(id: id, enabled: true)) }
         }
-        for e in extras where !p.mods.contains(where: { $0.id == e.id }) && mod(e.id) != nil { p.mods.append(e) }
+        for e in extras where !p.mods.contains(where: { $0.id == e.id }) && mod(e.id) != nil {
+            var kept = e; if duplicatesCollection(e.id) { kept.enabled = false }
+            p.mods.append(kept)
+        }
         p.loadOrder = manifest.loadOrder
         for e in extraPlugins where !p.loadOrder.contains(where: { $0.name.lowercased() == e.name.lowercased() }) { p.loadOrder.append(e) }
         if let v = detectedVersion { p.gameVersion = v }   // the profile remembers its Skyrim version (profile switches)
@@ -439,7 +446,7 @@ extension ModKit {
         earlier = earlier.filter { current.contains($0) || stillUsed.contains($0) }
         cols.append(InstalledCollection(slug: info.slug, name: info.name, revision: info.revision, profile: profileName,
                                         previousProfile: previous == profileName ? (earlier.isEmpty ? "Default" : (installedCollections().first { $0.slug == info.slug }?.previousProfile ?? "Default")) : previous,
-                                        modIDs: Array(Set(earlier + installedHere)), gameVersion: detectedVersion, failed: failedNames.isEmpty ? nil : failedNames))
+                                        modIDs: Array(Set(earlier + installedHere)), gameVersion: detectedVersion, failed: failedNames.isEmpty ? nil : failedNames, reused: reusedHere.isEmpty ? nil : reusedHere))
         try saveCollections(cols)
         try deploy(p)
         return profileName

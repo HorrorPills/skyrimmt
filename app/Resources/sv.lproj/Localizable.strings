@@ -175,7 +175,7 @@
 "Add your Nexus Mods API key first." = "Lägg först till din Nexus Mods-API-nyckel.";
 "Switch “%@” to Skyrim %@ first (Game tab)." = "Byt först ”%@” till Skyrim %@ (fliken Spel).";
 "Restoring the load order of %@…" = "Återställer laddningsordningen för %@ …";
-"Load order of “%@” restored from %@ rev %@ (%ld active plugins)." = "Laddningsordningen för ”%@” återställdes från %@ version %@ (%ld aktiva insticksmoduler).";
+"Load order of “%@” restored from %@ rev %ld (%ld active plugins)." = "Laddningsordningen för ”%@” återställdes från %@ version %ld (%ld aktiva insticksmoduler).";
 "Restore failed: %@" = "Återställningen misslyckades: %@";
 "Enabling instant switching…" = "Aktiverar omedelbart profilbyte …";
 "Disabling instant switching…" = "Inaktiverar omedelbart profilbyte …";
@@ -500,7 +500,7 @@
 "Animations need regenerating" = "Animationer behöver genereras om";
 "Animation mods changed since Pandora last ran." = "Animationsmoddar har ändrats sedan Pandora kördes senast.";
 "Generate" = "Generera";
-"%@ has a new revision (%@)" = "%@ har en ny revision (%@)";
+"%@ has a new revision (%ld)" = "%@ har en ny revision (%ld)";
 "What changes: %@. Your own additions to its profile stay." = "Det som ändras: %@. Dina egna tillägg i profilen behålls.";
 "%@ %@ is out (you have %@)" = "%@ %@ finns ute (du har %@)";
 "Updating reuses everything already downloaded and keeps the mods you added to “%@”." = "Uppdateringen återanvänder allt som redan hämtats och behåller moddar som du lade till i ”%@”.";

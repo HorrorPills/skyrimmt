@@ -79,7 +79,7 @@ extension ModManagerModel {
         if healthStale.bodySlide { out.append(HealthItem(id: "bs", severity: .warning, title: localized("Bodies and outfits need rebuilding"), detail: localized("Body or outfit mods changed since the last BodySlide build."), fix: localized("Build now"), action: { self.runBodySlide() })) }
         if healthStale.pandora { out.append(HealthItem(id: "pd", severity: .warning, title: localized("Animations need regenerating"), detail: localized("Animation mods changed since Pandora last ran."), fix: localized("Generate"), action: { self.runPandora() })) }
         for c in colInstalled { if let l = colLatest[c.slug] {
-            out.append(HealthItem(id: "col:" + c.slug, severity: .info, title: localizedFormat("%@ has a new revision (%@)", c.name, l.revision),
+            out.append(HealthItem(id: "col:" + c.slug, severity: .info, title: localizedFormat("%@ has a new revision (%ld)", c.name, l.revision),
                                   detail: localizedFormat("What changes: %@. Your own additions to its profile stay.", kit.collectionDiff(slug: c.slug, latest: l).summary),
                                   fix: localized("Update"), action: { self.section = .collections; self.updateCollection(c) }))
         } }

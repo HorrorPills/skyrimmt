@@ -651,7 +651,16 @@ final class Launcher: ObservableObject {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.message = localized("Choose where SkyrimMT keeps Wine, Steam and Skyrim (needs ~25 GB, more with mods)")
-        if panel.runModal() == .OK, let url = panel.url { switchGameFolder(to: url.path) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // exFAT and other non-Mac formats work, but without APFS clones every deployed mod is a second full copy
+        if !MacMetadata.nativeAttributes(url.path) {
+            let a = NSAlert()
+            a.messageText = localized("This drive isn't formatted as APFS")
+            a.informativeText = localized("Skyrim and mods will work, but each deployed mod takes its full size a second time and deploying is much slower. For the best result, use an APFS drive.")
+            a.addButton(withTitle: localized("Use This Drive")); a.addButton(withTitle: localized("Cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else { return }
+        }
+        switchGameFolder(to: url.path)
     }
 
     /// Game folders to switch between: the ones used before, the current one and SkyrimMT installs found in ~/Games.
@@ -846,19 +855,27 @@ final class Launcher: ObservableObject {
         Task { @MainActor in
             defer { focusingGame = false }
             func sleep(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }
-            func window(_ pids: [pid_t]) -> pid_t? {
+            func window(_ pids: [pid_t], minWidth: CGFloat = 300, minHeight: CGFloat = 200) -> pid_t? {
                 let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
                 return list.lazy.compactMap { w -> pid_t? in
                     guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, pids.contains(pid), (w[kCGWindowLayer as String] as? Int) == 0,
-                          let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Width"] ?? 0) >= 300, (b["Height"] ?? 0) >= 200 else { return nil }
+                          let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Width"] ?? 0) >= minWidth, (b["Height"] ?? 0) >= minHeight else { return nil }
                     return pid
                 }.first
             }
-            var game: pid_t?
+            var game: pid_t?, raisedDialog = false
             for _ in 0..<480 where game == nil {   // a big mod list can take minutes to open its window
                 guard self.gameRunning else { return }
                 game = window(self.gamePIDs)
-                if game == nil { await sleep(0.25) }
+                if game == nil {
+                    // a question before the game window (SKSE's "plugin failed to load"): hidden behind the launcher, the
+                    // game would just seem stuck. The player's answer can take any time: keep waiting for the game.
+                    if !raisedDialog, let dialog = window(self.gamePIDs, minWidth: 200, minHeight: 100),
+                       NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+                        raisedDialog = Launcher.bringToFront(dialog)
+                    }
+                    await sleep(0.25)
+                }
             }
             guard let game else { return }
             let me = ProcessInfo.processInfo.processIdentifier

@@ -123,6 +123,7 @@ if a.first == "collection-diff", a.count >= 2 {   // skyrimmt-cli collection-dif
     sem.wait(); exit(0)
 }
 if a.first == "clean", a.count >= 3 {   // skyrimmt-cli clean <xEdit.exe> <Plugin> [--test] — Quick Auto Clean into the Cleaned Plugins mod
+    ModKit.cleaningWithoutClones = ProcessInfo.processInfo.environment["SKYRIMMT_TEST_NO_CLONE"] == "1"   // workspace as on exFAT
     let job = try kit.prepareCleaning(plugin: a[2], xedit: URL(fileURLWithPath: a[1]))
     print("workspace \(job.workspace.path)\nargs: \(job.arguments.joined(separator: " "))")
     let root = ProcessInfo.processInfo.environment["SKYRIMMT_ROOT"] ?? FileManager.default.currentDirectoryPath

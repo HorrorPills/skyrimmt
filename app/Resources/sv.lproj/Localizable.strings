@@ -1062,3 +1062,6 @@
 "%ld mod updates on Nexus" = "%ld modduppdateringar på Nexus";
 " (%ld pinned by a collection)" = " (%ld låsta av en samling)";
 ". Filter “Update available”." = ". Filtrera på ”Uppdatering tillgänglig”.";
+"This drive isn't formatted as APFS" = "Den här enheten är inte formaterad som APFS";
+"Skyrim and mods will work, but each deployed mod takes its full size a second time and deploying is much slower. For the best result, use an APFS drive." = "Skyrim och moddar fungerar, men varje installerad modd tar upp sin fulla storlek en gång till och installationen går mycket långsammare. Använd helst en APFS-enhet.";
+"Use This Drive" = "Använd den här enheten";

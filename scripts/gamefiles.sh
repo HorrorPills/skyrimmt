@@ -11,7 +11,7 @@ status() {
   [ "$GAMEDIR" = "$BASE_GAMEDIR" ] || base="$SKYRIM_HOME/config/modkit/versions/$(basename "$GAMEDIR")/baseline.tsv"
   {
     /usr/bin/tr -d '\r' < "$GAMEDIR/Skyrim_Default.ini" 2>/dev/null | /usr/bin/sed -n 's/^sResourceArchiveList2*=//p' | /usr/bin/tr ',' '\n' | /usr/bin/sed 's/^ *//; s/ *$//; /^$/d; /^Skyrim - Patch\.bsa$/Id; /^Skyrim - Voices_/Id; s#^#Data/#'   # (no build ships Patch; Voices is named per language)
-    [ -f "$base" ] && /usr/bin/cut -f1 "$base" | /usr/bin/grep -iE '^Data/[^/]+\.(bsa|esm)$'
+    [ -f "$base" ] && /usr/bin/cut -f1 "$base" | /usr/bin/grep -iE '^Data/[^/]+\.(bsa|esm)$' | /usr/bin/grep -v '^Data/\._'
   } | /usr/bin/sort -fu | while IFS= read -r f; do [ -e "$GAMEDIR/$f" ] || echo "${f#Data/}"; done
 }
 case "${1:-status}" in

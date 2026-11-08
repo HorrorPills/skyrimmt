@@ -98,7 +98,8 @@ extension ModKit {
         guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
         var out: [String] = []
         for case let u as URL in en where (try? u.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
-            out.append(String(u.path.dropFirst(root.path.count + 1)))
+            let rel = String(u.path.dropFirst(root.path.count + 1))
+            if !MacMetadata.inPath(rel) { out.append(rel) }
         }
         return out.sorted()
     }

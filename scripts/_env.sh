@@ -61,6 +61,27 @@ keizaal_running(){ [ -n "$(win_pids 'keizaal-online\.exe')" ]; }   # Keizaal Onl
 server_up()     { pgrep -f "$SKYRIM_HOME/wine/.*wineserver" >/dev/null; }
 # Replacing Wine's files needs Wine stopped. Only its own background services running (the launcher's controller check
 # starts them): stop those, in this prefix only. Returns 1 when anything else runs (game, Steam, a tool).
+native_attributes() { [ -n "$(/usr/bin/find "$GAMEDIR" -maxdepth 0 \( -fstype apfs -o -fstype hfs \) 2>/dev/null)" ]; }
+
+# While the game runs (session-helper.sh): each new save gets "._name.ess", which Skyrim's Load menu lists as a broken
+# newest save ("$SAVE OBSOLETE"). Only called on volumes that create them.
+sweep_save_metadata() {
+  /usr/bin/find "$MYGAMES_DIR" -maxdepth 3 \( -name '._*.ess' -o -name '._*.skse' \) -type f -delete 2>/dev/null
+  return 0
+}
+
+sweep_mac_metadata() {
+  # Volumes without native extended attributes (exFAT, FAT, network shares) keep them in visible "._name" files next to
+  # "name". They hold metadata only, but Windows programs see ordinary files: SKSE tries to load "._Name.dll" as a plugin
+  # and stops the game. Anything can create them (Steam, tools, the game), so they go right before a start too. APFS and
+  # HFS+ never create them: left alone there, except in SKSE's plugin folder, where one that came along (a folder copied
+  # from such a drive) stops the game on any volume.
+  /usr/bin/find "$GAMEDIR/Data/SKSE/Plugins" -maxdepth 1 -name '._*' -type f -delete 2>/dev/null
+  native_attributes && return 0
+  /usr/bin/find "$GAMEDIR" "$MYGAMES_DIR" -name '._*' -type f -delete 2>/dev/null
+  return 0
+}
+
 stop_idle_wine() {
   server_up || return 0
   local p name

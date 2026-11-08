@@ -89,7 +89,7 @@ public enum Installer {
     }
 
     static func entries(_ dir: URL) -> [String] {
-        ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0 != ".DS_Store" && $0 != "__MACOSX" }
+        ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { !MacMetadata.isEntry($0) }
     }
     static func isDir(_ u: URL) -> Bool { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: u.path, isDirectory: &d) && d.boolValue }
 
@@ -207,7 +207,7 @@ extension ModKit {
         for id in stagedProfileMods {
             guard let m = mod(id) else { continue }
             for f in (try? FileManager.default.contentsOfDirectory(atPath: stagingFolder(m).path)) ?? []
-                where PluginParser.extensions.contains((f as NSString).pathExtension.lowercased()) { active.insert(f.lowercased()) }
+                where !MacMetadata.isFile(f) && PluginParser.extensions.contains((f as NSString).pathExtension.lowercased()) { active.insert(f.lowercased()) }
         }
         return FomodContext(pluginState: { name in
             let k = name.lowercased()

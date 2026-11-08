@@ -80,16 +80,31 @@ extension ModKit {
     public var cleanedMod: ModRecord? { mods.first { $0.name == ModKit.cleanedModName } }
 
     /// Set up the workspace for one plugin (game must be deployed: the clone is what the game would load).
+    /// Test hook: build the workspace as on a volume without clones.
+    public static var cleaningWithoutClones = false
+
+    /// xEdit's own Data folder. One clonefile call copies the whole tree copy-on-write (seconds, no extra space). A volume
+    /// without clones (exFAT) would need a second full copy of the game per plugin: there only the plugin being cleaned
+    /// is copied (xEdit writes nothing else) and everything else in Data is a link to the real thing.
+    static func makeCleaningData(from data: URL, to dst: URL, plugin: String) throws {
+        if !cleaningWithoutClones, clonefile(data.path, dst.path, 0) == 0 { return }
+        let fm = FileManager.default
+        try fm.createDirectory(at: dst, withIntermediateDirectories: true)
+        for name in try fm.contentsOfDirectory(atPath: data.path) where !MacMetadata.isEntry(name) {
+            let src = data.appendingPathComponent(name), to = dst.appendingPathComponent(name)
+            if name.caseInsensitiveCompare(plugin) == .orderedSame { try copyContents(src.path, to: to.path) }
+            else { try fm.createSymbolicLink(at: to, withDestinationURL: src) }
+        }
+    }
+
     public func prepareCleaning(plugin: String, xedit: URL) throws -> CleaningJob {
         let fm = FileManager.default
         let data = gameDir.appendingPathComponent("Data")
         guard fm.fileExists(atPath: data.appendingPathComponent(plugin).path) else { throw ModKitError.invalid("\(plugin) is not in the game's Data folder (deploy first)") }
         let ws = home.appendingPathComponent("cache/cleaning/\(UUID().uuidString)")
         try fm.createDirectory(at: ws, withIntermediateDirectories: true)
-        // one clonefile call copies the whole tree copy-on-write (seconds, no extra space)
-        guard clonefile(data.path, ws.appendingPathComponent("Data").path, 0) == 0 else {
-            try? fm.removeItem(at: ws); throw ModKitError.invalid("couldn't clone the Data folder: \(String(cString: strerror(errno)))")
-        }
+        do { try ModKit.makeCleaningData(from: data, to: ws.appendingPathComponent("Data"), plugin: plugin) }
+        catch { try? fm.removeItem(at: ws); throw ModKitError.invalid("couldn't prepare the cleaning workspace: \(error)") }
         for d in ["Backup", "Cache"] { try fm.createDirectory(at: ws.appendingPathComponent(d), withIntermediateDirectories: true) }
         let lo = loadOrder()
         let txt = "# SkyrimMT cleaning workspace\r\n" + lo.entries.map { ($0.active ? "*" : "") + $0.name }.joined(separator: "\r\n") + "\r\n"

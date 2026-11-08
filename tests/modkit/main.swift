@@ -117,7 +117,7 @@ func unitTests() {
     check(snapshot(f.game) == expected(vanilla: vanilla, profile: p, kit: f.kit), "deployed == expected")
     check(read(f.game.appendingPathComponent("skse64_loader.exe")) == "loader", "root mod goes to the game folder")
     check(read(f.game.appendingPathComponent("Data/textures/shared.dds")) == "fromB", "later mod wins, case-insensitive")
-    check(r.cloned == 6, "all files placed as APFS clones (\(r.cloned))")
+    check((MacMetadata.nativeAttributes(f.game.path) ? r.cloned : r.copied) == 6, "all files placed (APFS: as clones) (\(r.cloned)+\(r.copied))")
     check(r.backedUp == 1, "vanilla file moved aside (\(r.backedUp))")
     let plan = try! f.kit.plan()
     check(plan.conflicts[b.id]?[a.id] == 1, "conflict B over A counted")
@@ -471,6 +471,7 @@ if mode == "all" || mode == "vortex" { vortexBridgeTests() }
 if mode == "all" || mode == "bodyslide" { bodySlideTests(); bodySlideConfigTests(); builtinTests(); deleteProfileTests(); purgeKeepsLoadOrderTests() }
 if mode == "all" || mode == "mo2" { mo2Tests(); manualInstallFilesTests(); mo2VariantTests(); listUpdateTests(); profileINITests(); vanillaViewTests() }
 if mode == "all" || mode == "profiles" { profileHistoryTests(); snapshotTests(); perfTests(); essentialFilesTests(); toolPackageTests(); modsOutsideProfileTests(); dataTreeTests(); separateSavesTests(); saveFolderNameTests(); saveBackupTests(); iniEditorTests(); modEditingTests(); requirementsTests(); downloadsTests(); updatesTests(); crashLogTests(); crashLog125Tests(); crashFixTests(); crashProfileTests(); saveTests(); saveGuardTests(); lootRuleTests(); lightCandidateTests(); flagLightTests(); pluginLockTests(); categoryTests(); existingDownloadTests(); collectionUpdateTests(); collectionDuplicateTests(); ansiTests(); cleaningTests(); versionKeyTests(); duplicateTests(); mergeDuplicateTests(); perProfileOverwriteTests(); driftTests(); editedFilesFollowProfileTests(); reinstallTests(); updatedFilesReachGameTests(); primaryFileTests(); endorseTests(); colorTagTests(); skseVersionTests(); parallelPrefetchTests(); sksePrereqTests(); driftCheckSpeedTest(); trackTests(); wabbajackCacheTests(); modListMarkdownTests(); detectToolsTests(); gogLayoutTests() }
+if mode == "all" || mode == "volume" { macMetadataTests(); staleJournalTests(); exfatTests() }
 if mode == "bench" { bench() }
 if mode == "scale" { let e = ProcessInfo.processInfo.environment; scaleTests(mods: Int(e["SCALE_MODS"] ?? "") ?? 2000, filesPerMod: Int(e["SCALE_FILES"] ?? "") ?? 250) }
 print("\(passes) passed, \(failures) failed")

@@ -133,7 +133,7 @@ public struct LoadOrder {
     public static func load(dataDir: URL, gameDir: URL, pluginsTxt: URL) -> LoadOrder {
         var lo = LoadOrder()
         let files = ((try? FileManager.default.contentsOfDirectory(atPath: dataDir.path)) ?? [])
-            .filter { PluginParser.extensions.contains(($0 as NSString).pathExtension.lowercased()) }
+            .filter { !MacMetadata.isFile($0) && PluginParser.extensions.contains(($0 as NSString).pathExtension.lowercased()) }
         let present = Dictionary(files.map { ($0.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
         for f in files {
             do { lo.headers[f.lowercased()] = try PluginParser.parse(dataDir.appendingPathComponent(f)) }

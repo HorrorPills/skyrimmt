@@ -1618,7 +1618,7 @@ final class ModManagerModel: ObservableObject {
                 try k.applyCollectionLoadOrder(slug: c.slug, manifest: manifest)
                 try? FileManager.default.removeItem(at: work)
                 let n = manifest.loadOrder.filter(\.active).count
-                await MainActor.run { self.busy = nil; self.message = localizedFormat("Load order of “%@” restored from %@ rev %@ (%ld active plugins).", c.profile, c.name, c.revision, n); self.reload() }
+                await MainActor.run { self.busy = nil; self.message = localizedFormat("Load order of “%@” restored from %@ rev %ld (%ld active plugins).", c.profile, c.name, c.revision, n); self.reload() }
             } catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Restore failed: %@", "\(error)"); self.reload() } }
         }
     }

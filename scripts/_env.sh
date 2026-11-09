@@ -58,7 +58,12 @@ game_running()  { [ -n "$(game_pids)" ]; }
 loader_running(){ [ -n "$(loader_pids)" ]; }
 steam_running() { [ -n "$(win_pids 'steam\.exe')" ]; }
 keizaal_running(){ [ -n "$(win_pids 'keizaal-online\.exe')" ]; }   # Keizaal Online's launcher (scripts/keizaal.sh)
-server_up()     { pgrep -f "$SKYRIM_HOME/wine/.*wineserver" >/dev/null; }
+# Our wineserver, by file identity (same rule as win_pids). Its command line can't be matched against SKYRIM_HOME: Wine
+# starts it by the resolved path, so a symlink in the path, another letter case (an existing ~/games) or a regex character
+# in a chosen folder made a running server look gone, and the session helper then killed Steam as an orphan 20 s in.
+# LC_ALL=C: in a UTF-8 locale one process anywhere with other bytes in its command line makes pgrep -f give up (rc 3).
+server_pids()   { local c; c=$(LC_ALL=C pgrep -f wineserver) || return 0; lsof -a -d txt -t "$WINESERVER" 2>/dev/null | grep -Fx -f <(echo "$c"); }
+server_up()     { [ -n "$(server_pids)" ]; }
 # Replacing Wine's files needs Wine stopped. Only its own background services running (the launcher's controller check
 # starts them): stop those, in this prefix only. Returns 1 when anything else runs (game, Steam, a tool).
 native_attributes() { [ -n "$(/usr/bin/find "$GAMEDIR" -maxdepth 0 \( -fstype apfs -o -fstype hfs \) 2>/dev/null)" ]; }

@@ -15,8 +15,44 @@ func localized(_ key: String) -> String {
     NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "")
 }
 
+func appLocale() -> Locale {
+    let code = UserDefaults.standard.string(forKey: AppLanguage.defaultsKey) ?? ""
+    return code.isEmpty ? .current : Locale(identifier: code)
+}
+
 func localizedFormat(_ key: String, _ arguments: CVarArg...) -> String {
-    String(format: localized(key), locale: Locale.current, arguments: arguments)
+    String(format: localized(key), locale: appLocale(), arguments: arguments)
+}
+
+/// Launcher UI language. Empty means follow macOS; a code overrides it and needs a relaunch.
+enum AppLanguage {
+    static let defaultsKey = "appLanguage"
+    static let choices: [(code: String, title: String)] = [
+        ("", "System"),
+        ("en", "English"),
+        ("zh-Hans", "简体中文"),
+        ("sv", "Svenska"),
+    ]
+
+    static var saved: String { UserDefaults.standard.string(forKey: defaultsKey) ?? "" }
+
+    static func applySaved() {
+        let code = saved
+        if code.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+        } else {
+            UserDefaults.standard.set([code], forKey: "AppleLanguages")
+        }
+    }
+
+    static func relaunch(selecting code: String) {
+        guard code != saved else { return }
+        UserDefaults.standard.set(code, forKey: defaultsKey)
+        applySaved()
+        let pid = ProcessInfo.processInfo.processIdentifier
+        _ = spawnDetached(["/bin/bash", "-c", "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; open \"$1\"", "relaunch", Bundle.main.bundlePath])
+        NSApp.terminate(nil)
+    }
 }
 
 // MARK: - paths & shell
@@ -371,13 +407,13 @@ final class Launcher: ObservableObject {
         checks = [
             SetupCheck(id: "rosetta", title: "Rosetta 2", ok: exists(Paths.rosetta),
                        fix: "Click “Run setup” (or: softwareupdate --install-rosetta --agree-to-license)."),
-            SetupCheck(id: "wine", title: "Wine runtime" + (Launcher.pinnedRuntime.map { " (\($0))" } ?? ""), ok: exists(Paths.wine) && runtimeCurrent,
+            SetupCheck(id: "wine", title: Launcher.pinnedRuntime.map { localizedFormat("Wine runtime (%@)", $0) } ?? "Wine runtime", ok: exists(Paths.wine) && runtimeCurrent,
                        fix: "Click “Re-check” (or “Set up everything”) with Skyrim and Steam closed — downloads the runtime (Wine 10 + DXMT, ~230 MB)."),
             SetupCheck(id: "prefix", title: "Wine environment", ok: exists(Paths.prefix + "/system.reg"),
                        fix: "Created by “Run setup”."),
             SetupCheck(id: "crashfix", title: "Skyrim fix for the Metal renderer", ok: crashFix == .applied,
                        fix: "Applied by “Run setup” (without it Skyrim quits after the logo)."),
-            SetupCheck(id: "dxmt", title: "Metal renderer (DXMT \(Launcher.pinnedDXMT ?? "runtime"))", ok: dxmtCurrent,
+            SetupCheck(id: "dxmt", title: localizedFormat("Metal renderer (DXMT %@)", Launcher.pinnedDXMT ?? "runtime"), ok: dxmtCurrent,
                        fix: "Click “Re-check” (or “Set up everything”) with Skyrim and Steam closed: updates DXMT (no more black shadows following characters)."),
         ] + (isGOG ? [
             SetupCheck(id: "skyrim", title: "Skyrim Anniversary Edition installed (GOG)", ok: skyrimInstalled,
@@ -1060,6 +1096,9 @@ enum SessionRunner {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        AppLanguage.applySaved()
+    }
     /// nxm:// links (Nexus "Mod Manager Download"): handed to the mod manager, whose window opens.
     func application(_ application: NSApplication, open urls: [URL]) {
         // skyrim-rp:// (Keizaal Online's Discord login coming back from the browser): to its launcher in the prefix
@@ -1799,6 +1838,15 @@ struct ContentView: View {
                 .font(.system(size: 12)).foregroundStyle(Color.skCream.opacity(0.7))
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
+                RowText(title: "Language",
+                        detail: "Interface language. Changing it restarts SkyrimMT.")
+                Picker("", selection: Binding(get: { AppLanguage.saved }, set: { AppLanguage.relaunch(selecting: $0) })) {
+                    ForEach(AppLanguage.choices, id: \.code) { Text(localized($0.title)).tag($0.code) }
+                }
+                .labelsHidden().frame(width: 160)
+            }
+            Divider().overlay(Color.white.opacity(0.06))
+            HStack {
                 RowText(title: "Skyrim from",
                         detail: launcher.skyrimInstalled ? "Installed. For the other store, choose another game folder below."
                                                          : "Steam, or the offline installers from your GOG library.")
@@ -2003,6 +2051,7 @@ private typealias SetFrontProcessFn = @convention(c) (UnsafePointer<ProcessSeria
 struct SkyrimMTApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var mods = ModManagerModel()
+    init() { AppLanguage.applySaved() }
     var body: some Scene {
         // The launcher is a singleton; Nexus URL events must not create extra launcher windows.
         Window("SkyrimMT", id: "launcher") {

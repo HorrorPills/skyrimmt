@@ -1,5 +1,12 @@
 /* Huvudfönster och första installationen. Nycklarna är engelska källsträngar
    eftersom SwiftUI använder dem direkt som LocalizedStringKey. */
+"Language" = "Språk";
+"Interface language. Changing it restarts SkyrimMT." = "Gränssnittets språk. Att byta startar om SkyrimMT.";
+"System" = "Systeminställning";
+"Wine runtime" = "Wine-körtid";
+"Wine runtime (%@)" = "Wine-körtid (%@)";
+"Metal renderer (DXMT %@)" = "Metal-renderare (DXMT %@)";
+"Ready." = "Klar.";
 "Game" = "Spel";
 "Mods" = "Moddar";
 "Setup" = "Inställning";

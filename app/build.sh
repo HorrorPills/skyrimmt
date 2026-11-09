@@ -56,6 +56,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <array>
     <string>en</string>
     <string>sv</string>
+    <string>zh-Hans</string>
   </array>
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleURLTypes</key><array><dict>

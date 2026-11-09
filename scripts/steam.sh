@@ -11,7 +11,11 @@ if [ "${1:-}" = --show ]; then
   steam_running || { echo "steam is not running"; exit 1; }
   follow_session_sync; "$WINE" steam.exe steam://open/main >/dev/null 2>&1; exit 0
 fi
-steam_running && { echo "steam already running"; exit 0; }
+if steam_running; then
+  # Steam in the background (no window): "Log in to Steam" must show something
+  [ "${1:-}" = --login ] && { follow_session_sync; "$WINE" steam.exe steam://open/main >/dev/null 2>&1; }
+  echo "steam already running"; exit 0
+fi
 # leftovers of a crashed session (orphans of a dead wineserver) stop a new session from starting: sweep first
 "$SKYRIMMT_ROOT/scripts/wine-sweep.sh" >> "$SKYRIM_HOME/logs/session.log" 2>&1
 server_up || record_session_sync

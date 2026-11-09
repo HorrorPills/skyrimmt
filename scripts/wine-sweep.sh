@@ -11,9 +11,11 @@ server=$(server_pids | head -1)
 server_age=-1; [ -n "$server" ] && server_age=$(secs "$(ps -o etime= -p "$server" | tr -d ' ')")
 for pid in $(lsof -t "$NTDLL" 2>/dev/null | sort -u); do
   [ "$pid" = "$server" ] && continue
-  if [ "$server_age" -lt 0 ]; then why="no wineserver"
+  age=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' '); [ -n "$age" ] || continue; age=$(secs "$age")
+  if [ "$server_age" -lt 0 ]; then
+    [ "$age" -ge 5 ] || continue   # just started, its server still coming up (Steam clicked as the helper gives up): no orphan
+    why="no wineserver"
   else
-    age=$(secs "$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')"); [ -z "$age" ] && continue
     [ "$age" -gt $((server_age + 5)) ] || continue
     why="older than the running wineserver"
   fi

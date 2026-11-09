@@ -60,7 +60,7 @@ Nexus Mods. Third-party components: [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## Maintainers
 - **Build:** `app/build.sh` (Xcode Command Line Tools, Rust, mingw-w64). `--no-install` builds without installing.
-- **Tests:** `tests/modkit/run.sh` (`all`, `profiles`, `slots`, `bench`, …).
+- **Tests:** `tests/modkit/run.sh` (`all`, `profiles`, `slots`, `bench`, …), `tests/session/run.sh` (session scripts), `tests/l10n/run.sh` (translations).
 - **Layout:** `app/` SwiftUI app · `app/ModKit/` mod manager core · `scripts/` Wine/Steam/game shell scripts ·
   `helpers/loot/` LOOT helper (Rust) · `tools/` patches and build scripts · `config/` defaults and `release.conf`.
 - **Native tools:** `tools/{pandora,bodyslide,wabbajack}/build.sh` build from pinned upstream source + `macos.patch`.

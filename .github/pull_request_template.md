@@ -16,6 +16,8 @@
 
 - [ ] `app/build.sh --no-install` (app build)
 - [ ] `tests/modkit/run.sh all` (mod manager tests)
+- [ ] `tests/session/run.sh` (session scripts, if `scripts/` changed)
+- [ ] `tests/l10n/run.sh` (translations, if strings changed)
 - [ ] Manual testing (describe below)
 - [ ] Not run / not applicable (explain below)
 

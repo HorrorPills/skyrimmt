@@ -48,7 +48,10 @@ while :; do
     # nothing of ours runs (Steam not started yet, or the session already ended): give a just-requested Steam
     # start a moment to appear, then sweep leftovers and stop
     [ $(( $(date +%s) - started )) -lt 20 ] && [ $seen = 0 ] && continue
-    "$(dirname "$0")/wine-sweep.sh" >> "$LOG" 2>&1; log "no wineserver: done"; exit 0
+    sleep 2; server_up && continue                                      # a start just happening at the deadline: watch it
+    "$(dirname "$0")/wine-sweep.sh" >> "$LOG" 2>&1
+    sleep 2; server_up && continue                                      # started while sweeping (the sweep spares it)
+    log "no wineserver: done"; exit 0
   fi
   quiet=$((quiet + 1))
   if [ $seen = 1 ]; then

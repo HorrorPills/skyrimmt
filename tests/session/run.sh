@@ -63,5 +63,37 @@ mk "$T/reader"; tail -f "$T/reader/wine/bin/wineserver" >/dev/null 2>&1 & R=$!; 
 check "a process reading the file isn't the server" "$(up "$T/reader")" down
 stop "$R"
 
+echo "== orphan sweep"
+sweep() { ( export SKYRIM_HOME=$1; unset GAMEDIR; "$ROOT/scripts/wine-sweep.sh" >/dev/null ); }
+alive() { kill -0 "$1" 2>/dev/null && echo alive || echo gone; }
+ntdll() { mkdir -p "$1/wine/lib/wine/x86_64-unix"; : > "$1/wine/lib/wine/x86_64-unix/ntdll.so"; echo "$1/wine/lib/wine/x86_64-unix/ntdll.so"; }
+# "maps ntdll.so" is what makes a process ours: tail holding the file open plays a Wine process
+mk "$T/sweep"; N=$(ntdll "$T/sweep")
+tail -f "$N" >/dev/null 2>&1 & W=$!; pids+=($W); sleep 0.5
+sweep "$T/sweep"
+check "no server, just started: spared (its server is coming up)" "$(alive "$W")" alive
+sleep 6
+sweep "$T/sweep"; sleep 0.3
+check "no server, older: killed as an orphan" "$(alive "$W")" gone
+wait "$W" 2>/dev/null
+
+tail -f "$N" >/dev/null 2>&1 & W=$!; pids+=($W); sleep 7
+start "$T/sweep"
+sweep "$T/sweep"; sleep 0.3
+check "older than the running server: killed" "$(alive "$W")" gone
+check "the server itself stays" "$(alive "$LAST")" alive
+wait "$W" 2>/dev/null
+tail -f "$N" >/dev/null 2>&1 & W=$!; pids+=($W); sleep 0.5
+sweep "$T/sweep"
+check "younger than the running server: stays" "$(alive "$W")" alive
+stop "$W"; stop "$LAST"
+
+# never another runtime's processes
+mk "$T/theirs"; N2=$(ntdll "$T/theirs")
+tail -f "$N2" >/dev/null 2>&1 & W=$!; pids+=($W); sleep 6
+sweep "$T/sweep"
+check "another runtime's process is never touched" "$(alive "$W")" alive
+stop "$W"
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

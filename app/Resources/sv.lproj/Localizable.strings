@@ -1193,3 +1193,36 @@
 "Installing from GOG… %lld%%" = "Installerar från GOG… %lld%%";
 "%@ (Steam, auto-updates)" = "%@ (Steam, uppdateras automatiskt)";
 "%@ (pinned)" = "%@ (låst)";
+
+/* Mod Manager pages and the essentials list. */
+"Search Nexus Mods for Skyrim Special Edition" = "Sök på Nexus Mods efter Skyrim Special Edition";
+"Show more" = "Visa fler";
+"No mod stands out in this log." = "Ingen modd sticker ut i den här loggen.";
+" · optional" = " · valfri";
+"Collection link from nexusmods.com" = "Samlingslänk från nexusmods.com";
+"Install collection" = "Installera samling";
+"All installed" = "Allt är installerat";
+"Get on Nexus" = "Hämta på Nexus";
+"Sorts the load order with the LOOT masterlist and your own rules. Messages appear on the Plugins page." = "Sorterar laddningsordningen med LOOT:s huvudlista och dina egna regler. Meddelanden visas på sidan Plugins.";
+"Not included in this build." = "Ingår inte i den här versionen.";
+"Builds animation behaviours for Nemesis, Pandora and FNIS mods. Patches whose mod isn't installed stay off." = "Bygger animationsbeteenden för Nemesis-, Pandora- och FNIS-moddar. Korrigeringar vars modd inte är installerad förblir avstängda.";
+"Not installed in this build." = "Inte installerat i den här versionen.";
+"Builds bodies and outfits for your body mod." = "Bygger kroppar och kläder för din kroppsmodd.";
+"Loading the gallery…" = "Läser in galleriet…";
+"No lists loaded." = "Inga listor inlästa.";
+"No description." = "Ingen beskrivning.";
+"Download stopped." = "Nedladdningen stoppades.";
+"Script Extender. Required by most large mods." = "Script Extender. Krävs av de flesta stora moddar.";
+"SKSE 2.3.x for game 1.7.104." = "SKSE 2.3.x för spelet 1.7.104.";
+"Lets SKSE plugins work across game versions." = "Låter SKSE-plugins fungera över spelversioner.";
+"All in One, v13 or newer for 1.7.104." = "All in One, v13 eller nyare för 1.7.104.";
+"Fixes engine bugs and crashes." = "Rättar fel och krascher i spelmotorn.";
+"Plugin and preloader; both are installed." = "Plugin och förladdare; båda installeras.";
+"Frame rates above 60 without physics issues, and a frame limiter." = "Bildfrekvens över 60 utan fysikproblem, och en bildbegränsare.";
+"Supports SE 1.5.97, AE 1.6 and 1.7." = "Stöder SE 1.5.97, AE 1.6 och 1.7.";
+"Writes a crash log that the Crashes page analyzes." = "Skriver en kraschlogg som sidan Krascher analyserar.";
+"Logs go to My Games/Skyrim Special Edition/SKSE." = "Loggarna hamnar i My Games/Skyrim Special Edition/SKSE.";
+"Logs go to My Games/Skyrim Special Edition GOG/SKSE." = "Loggarna hamnar i My Games/Skyrim Special Edition GOG/SKSE.";
+"Improved menus and the mod configuration menu (MCM)." = "Förbättrade menyer och moddinställningsmenyn (MCM).";
+"Needs SKSE." = "Kräver SKSE.";
+"Choose the All in One file on Nexus." = "Välj filen All in One på Nexus.";

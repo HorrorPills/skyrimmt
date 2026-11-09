@@ -1159,3 +1159,36 @@
 "Installing from GOG… %lld%%" = "正在从 GOG 安装… %lld%%";
 "%@ (Steam, auto-updates)" = "%@（Steam，自动更新）";
 "%@ (pinned)" = "%@（已固定）";
+
+/* Mod Manager pages and the essentials list. */
+"Search Nexus Mods for Skyrim Special Edition" = "在 Nexus Mods 上搜索天际特别版";
+"Show more" = "显示更多";
+"No mod stands out in this log." = "此日志中没有明显可疑的模组。";
+" · optional" = " · 可选";
+"Collection link from nexusmods.com" = "来自 nexusmods.com 的合集链接";
+"Install collection" = "安装合集";
+"All installed" = "全部已安装";
+"Get on Nexus" = "在 Nexus 获取";
+"Sorts the load order with the LOOT masterlist and your own rules. Messages appear on the Plugins page." = "按 LOOT 主列表和你自己的规则排序加载顺序。提示信息会显示在插件页。";
+"Not included in this build." = "此构建未包含。";
+"Builds animation behaviours for Nemesis, Pandora and FNIS mods. Patches whose mod isn't installed stay off." = "为 Nemesis、Pandora 和 FNIS 模组生成动画行为。未安装对应模组的补丁保持关闭。";
+"Not installed in this build." = "此构建未安装。";
+"Builds bodies and outfits for your body mod." = "为你的身体模组生成身体和服装。";
+"Loading the gallery…" = "正在加载图库…";
+"No lists loaded." = "没有加载到列表。";
+"No description." = "没有说明。";
+"Download stopped." = "下载已停止。";
+"Script Extender. Required by most large mods." = "脚本扩展。大多数大型模组都需要。";
+"SKSE 2.3.x for game 1.7.104." = "SKSE 2.3.x，适用于游戏 1.7.104。";
+"Lets SKSE plugins work across game versions." = "让 SKSE 插件可以跨游戏版本工作。";
+"All in One, v13 or newer for 1.7.104." = "All in One，1.7.104 需要 v13 或更新版本。";
+"Fixes engine bugs and crashes." = "修复引擎错误和崩溃。";
+"Plugin and preloader; both are installed." = "插件和预加载器都会安装。";
+"Frame rates above 60 without physics issues, and a frame limiter." = "60 帧以上不会出现物理问题，并提供帧率限制。";
+"Supports SE 1.5.97, AE 1.6 and 1.7." = "支持 SE 1.5.97、AE 1.6 和 1.7。";
+"Writes a crash log that the Crashes page analyzes." = "写入崩溃日志，由崩溃页分析。";
+"Logs go to My Games/Skyrim Special Edition/SKSE." = "日志保存在 My Games/Skyrim Special Edition/SKSE。";
+"Logs go to My Games/Skyrim Special Edition GOG/SKSE." = "日志保存在 My Games/Skyrim Special Edition GOG/SKSE。";
+"Improved menus and the mod configuration menu (MCM)." = "改进的菜单和模组配置菜单（MCM）。";
+"Needs SKSE." = "需要 SKSE。";
+"Choose the All in One file on Nexus." = "请在 Nexus 上选择 All in One 文件。";

@@ -592,7 +592,7 @@ final class ModManagerModel: ObservableObject {
                 let a = NSAlert(); a.messageText = localizedFormat("Downloaded %@", title); a.informativeText = localized("Install it now?")
                 a.addButton(withTitle: "Install"); a.addButton(withTitle: "Later")
                 if a.runModal() == .alertFirstButtonReturn { install([f]) } else { message = localized("Saved in Downloads.") }
-            } catch { endDownload(job, error: error); busy = nil; message = error is CancellationError ? "Download stopped." : "\(error)" }
+            } catch { endDownload(job, error: error); busy = nil; message = error is CancellationError ? localized("Download stopped.") : "\(error)" }
         }
     }
 
@@ -2031,7 +2031,7 @@ struct ModManagerView: View {
                                         .labelsHidden()
                                 } else { Image(systemName: "checkmark").foregroundStyle(.secondary).frame(width: 20) }
                                 VStack(alignment: .leading) {
-                                    Text(f.modName); Text(f.fileName + (f.optional ? " · optional" : "")).font(.caption).foregroundStyle(.secondary)
+                                    Text(f.modName); Text(f.fileName + (f.optional ? localized(" · optional") : "")).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Text(ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
@@ -2116,8 +2116,8 @@ struct ModManagerView: View {
                     Image(systemName: ok ? "checkmark.circle.fill" : "circle.dashed").font(.title3).foregroundStyle(ok ? .green : .secondary)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(e.name).fontWeight(.medium)
-                        Text(e.why).font(.callout)
-                        Text(e.note(for: model.gameVersion(), gog: model.kit.isGOG)).font(.caption).foregroundStyle(.secondary)
+                        Text(localized(e.why)).font(.callout)
+                        Text(localized(e.note(for: model.gameVersion(), gog: model.kit.isGOG))).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button(ok ? "Page" : "Get on Nexus") { NSWorkspace.shared.open(e.filesURL) }

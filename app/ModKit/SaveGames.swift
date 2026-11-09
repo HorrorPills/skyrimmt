@@ -182,7 +182,7 @@ extension ModKit {
     @discardableResult
     public func backupSaves(reason: String) -> SaveBackup? {
         let fm = FileManager.default, src = activeSavesFolder
-        let files = ((try? fm.contentsOfDirectory(atPath: src.path)) ?? []).filter { ["ess", "skse"].contains(($0 as NSString).pathExtension.lowercased()) }
+        let files = ((try? fm.contentsOfDirectory(atPath: src.path)) ?? []).filter { !MacMetadata.isFile($0) && ["ess", "skse"].contains(($0 as NSString).pathExtension.lowercased()) }
         guard !files.isEmpty else { return nil }
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH-mm-ss"
         let dst = saveBackupsDir.appendingPathComponent("\(f.string(from: Date())) – \(ModKit.asciiFolderName(reason))")
@@ -204,7 +204,7 @@ extension ModKit {
             let name = u.lastPathComponent
             let parts = name.components(separatedBy: " – ")
             guard let d = f.date(from: parts[0]) else { return nil }
-            let n = ((try? fm.contentsOfDirectory(atPath: u.path)) ?? []).filter { $0.lowercased().hasSuffix(".ess") }.count
+            let n = ((try? fm.contentsOfDirectory(atPath: u.path)) ?? []).filter { !MacMetadata.isFile($0) && $0.lowercased().hasSuffix(".ess") }.count
             return SaveBackup(url: u, date: d, reason: parts.dropFirst().joined(separator: " – "), count: n)
         }.sorted { $0.date > $1.date }
     }
@@ -218,7 +218,7 @@ extension ModKit {
         let dst = lines.count > 1 && !lines[1].isEmpty ? URL(fileURLWithPath: lines[1]) : savesDir
         try fm.createDirectory(at: dst, withIntermediateDirectories: true)
         var n = 0
-        for f in (try? fm.contentsOfDirectory(atPath: b.url.path)) ?? [] where ["ess", "skse"].contains((f as NSString).pathExtension.lowercased()) {
+        for f in (try? fm.contentsOfDirectory(atPath: b.url.path)) ?? [] where !MacMetadata.isFile(f) && ["ess", "skse"].contains((f as NSString).pathExtension.lowercased()) {
             let to = dst.appendingPathComponent(f)
             if fm.fileExists(atPath: to.path) { if replace { try fm.removeItem(at: to) } else { continue } }
             try cloneOrCopy(b.url.appendingPathComponent(f), to); n += 1

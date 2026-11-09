@@ -763,7 +763,7 @@ final class ModManagerModel: ObservableObject {
             let rules = k.lootRules()
             let names = k.profileNames()
             let dl = ((try? FileManager.default.contentsOfDirectory(at: k.home.appendingPathComponent("downloads"), includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
-                .filter { ["7z", "zip", "rar", "gz", "tgz", "tar"].contains($0.pathExtension.lowercased()) }
+                .filter { !MacMetadata.isFile($0.lastPathComponent) && ["7z", "zip", "rar", "gz", "tgz", "tar"].contains($0.pathExtension.lowercased()) }
                 .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             let ups = k.cachedUpdates()
             await MainActor.run {
@@ -820,7 +820,7 @@ final class ModManagerModel: ObservableObject {
     func reloadDownloads() {
         let dir = kit.home.appendingPathComponent("downloads")
         let dl = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
-            .filter { ["7z", "zip", "rar", "gz", "tgz", "tar"].contains($0.pathExtension.lowercased()) }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .filter { !MacMetadata.isFile($0.lastPathComponent) && ["7z", "zip", "rar", "gz", "tgz", "tar"].contains($0.pathExtension.lowercased()) }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         if dl != downloads { downloads = dl }
         let k = kit
         Task.detached { let e = k.downloadEntries(); await MainActor.run { self.downloadEntries = e } }
@@ -1618,7 +1618,7 @@ final class ModManagerModel: ObservableObject {
                 try k.applyCollectionLoadOrder(slug: c.slug, manifest: manifest)
                 try? FileManager.default.removeItem(at: work)
                 let n = manifest.loadOrder.filter(\.active).count
-                await MainActor.run { self.busy = nil; self.message = localizedFormat("Load order of “%@” restored from %@ rev %@ (%ld active plugins).", c.profile, c.name, c.revision, n); self.reload() }
+                await MainActor.run { self.busy = nil; self.message = localizedFormat("Load order of “%@” restored from %@ rev %ld (%ld active plugins).", c.profile, c.name, c.revision, n); self.reload() }
             } catch { await MainActor.run { self.busy = nil; self.message = localizedFormat("Restore failed: %@", "\(error)"); self.reload() } }
         }
     }

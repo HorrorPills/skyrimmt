@@ -23,7 +23,7 @@ extension ModKit {
         let byPath = Dictionary(mods.compactMap { m in m.source.map { ($0.path, m.id) } }, uniquingKeysWith: { a, _ in a })
         let byFile = Dictionary(mods.compactMap { m in m.nexus?.fileID.map { ($0, m.id) } }, uniquingKeysWith: { a, _ in a })
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        return files.filter { ModKit.archiveExtensions.contains($0.pathExtension.lowercased()) }.map { u in
+        return files.filter { !MacMetadata.isFile($0.lastPathComponent) && ModKit.archiveExtensions.contains($0.pathExtension.lowercased()) }.map { u in
             let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             let meta = (try? Data(contentsOf: u.appendingPathExtension("meta.json"))).flatMap { try? dec.decode(DownloadMeta.self, from: $0) }
             let nexus = meta.map { NexusRef(modID: $0.modID, fileID: $0.fileID) }

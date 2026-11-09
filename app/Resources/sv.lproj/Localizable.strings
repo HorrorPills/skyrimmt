@@ -182,7 +182,7 @@
 "Add your Nexus Mods API key first." = "Lägg först till din Nexus Mods-API-nyckel.";
 "Switch “%@” to Skyrim %@ first (Game tab)." = "Byt först ”%@” till Skyrim %@ (fliken Spel).";
 "Restoring the load order of %@…" = "Återställer laddningsordningen för %@ …";
-"Load order of “%@” restored from %@ rev %@ (%ld active plugins)." = "Laddningsordningen för ”%@” återställdes från %@ version %@ (%ld aktiva insticksmoduler).";
+"Load order of “%@” restored from %@ rev %ld (%ld active plugins)." = "Laddningsordningen för ”%@” återställdes från %@ version %ld (%ld aktiva insticksmoduler).";
 "Restore failed: %@" = "Återställningen misslyckades: %@";
 "Enabling instant switching…" = "Aktiverar omedelbart profilbyte …";
 "Disabling instant switching…" = "Inaktiverar omedelbart profilbyte …";
@@ -507,7 +507,7 @@
 "Animations need regenerating" = "Animationer behöver genereras om";
 "Animation mods changed since Pandora last ran." = "Animationsmoddar har ändrats sedan Pandora kördes senast.";
 "Generate" = "Generera";
-"%@ has a new revision (%@)" = "%@ har en ny revision (%@)";
+"%@ has a new revision (%ld)" = "%@ har en ny revision (%ld)";
 "What changes: %@. Your own additions to its profile stay." = "Det som ändras: %@. Dina egna tillägg i profilen behålls.";
 "%@ %@ is out (you have %@)" = "%@ %@ finns ute (du har %@)";
 "Updating reuses everything already downloaded and keeps the mods you added to “%@”." = "Uppdateringen återanvänder allt som redan hämtats och behåller moddar som du lade till i ”%@”.";
@@ -1069,3 +1069,6 @@
 "%ld mod updates on Nexus" = "%ld modduppdateringar på Nexus";
 " (%ld pinned by a collection)" = " (%ld låsta av en samling)";
 ". Filter “Update available”." = ". Filtrera på ”Uppdatering tillgänglig”.";
+"This drive isn't formatted as APFS" = "Den här enheten är inte formaterad som APFS";
+"Skyrim and mods will work, but each deployed mod takes its full size a second time and deploying is much slower. For the best result, use an APFS drive." = "Skyrim och moddar fungerar, men varje installerad modd tar upp sin fulla storlek en gång till och installationen går mycket långsammare. Använd helst en APFS-enhet.";
+"Use This Drive" = "Använd den här enheten";

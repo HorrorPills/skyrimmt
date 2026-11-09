@@ -120,6 +120,7 @@ if [ "${SKYRIMMT_USE_SKSE:-1}" = 1 ] && [ -f skse64_loader.exe ]; then
   if [ -n "$sv" ] && [ "$sv" = "$gv" ]; then exe=skse64_loader.exe
   else echo "SKSE is for Skyrim ${sv:-?}, the game is $gv — starting without SKSE"; fi
 fi
+sweep_mac_metadata   # exFAT etc.: SKSE would try to load "._Name.dll" as a plugin (see _env.sh)
 echo "== $(date '+%F %T') $exe renderer=${SKYRIMMT_RENDERER:-dxmt} trace=${SKYRIMMT_FRAMETRACE:-off} $*" >> "$LOG"
 WINEDLLOVERRIDES="${ovr#;}" "$WINE" "$exe" "$@" >> "$LOG" 2>&1 &
 disown

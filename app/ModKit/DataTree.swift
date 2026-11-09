@@ -69,7 +69,7 @@ extension ModKit {
     }
 
     public func dataTree(_ p: Profile? = nil) throws -> DataNode {
-        let base = ((try? String(contentsOf: deployer.layout.baselineURL, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        let base = ((try? String(contentsOf: deployer.layout.baselineURL, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init).filter { !MacMetadata.inPath($0) }
         return ModKit.dataTree(try plan(p), baseline: base.isEmpty ? deployer.listGameFiles() : base)
     }
 }

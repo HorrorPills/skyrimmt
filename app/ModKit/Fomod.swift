@@ -395,6 +395,9 @@ struct CaseIndex {
 
 func cloneOrCopy(_ src: URL, _ dst: URL) throws {
     if clonefile(src.path, dst.path, 0) == 0 { return }
+    // a single file without its attributes (a "._" file next to the copy on exFAT); folders the usual way
+    var st = stat()
+    if lstat(src.path, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, (try? copyContents(src.path, to: dst.path)) != nil { return }
     try FileManager.default.copyItem(at: src, to: dst)
 }
 
@@ -405,6 +408,7 @@ func copyTree(_ src: URL, to dst: URL, skipFomod: Bool) throws {
     guard let en = fm.enumerator(atPath: src.path) else { return }
     while let rel = en.nextObject() as? String {
         if skipFomod && rel.lowercased().hasPrefix("fomod") { continue }
+        if MacMetadata.inPath(rel) { continue }
         let s = src.appendingPathComponent(rel), d = dst.appendingPathComponent(rel)
         var isDir: ObjCBool = false
         fm.fileExists(atPath: s.path, isDirectory: &isDir)

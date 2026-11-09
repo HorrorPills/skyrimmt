@@ -31,9 +31,12 @@ end_session() {   # $1 = reason. Afterwards keep watching if a new launch alread
   done
   exit 0
 }
+sweep_saves=0; native_attributes || sweep_saves=1   # APFS: nothing extra runs during play
 while :; do
   sleep 1
-  if game_running; then seen=1; loader=0; quiet=0; gone=0; continue; fi
+  if game_running; then
+    [ "$sweep_saves" = 0 ] || sweep_save_metadata
+    seen=1; loader=0; quiet=0; gone=0; continue; fi
   if loader_running; then loader=1; quiet=0; gone=0; continue; fi      # Bethesda launcher / SKSE loader still open
   if keizaal_running; then   # Keizaal Online's launcher stays open around its games (as on Windows): keep the session
     if [ $seen = 1 ]; then mkdir -p "$SKYRIM_HOME/config/modkit"; date -u +%Y-%m-%dT%H:%M:%SZ >> "$SKYRIM_HOME/config/modkit/game-exits.tsv"; fi

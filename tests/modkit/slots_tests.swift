@@ -41,7 +41,7 @@ func slotTests() {
     check(k.parkedProfiles() == ["A"], "A parked (\(k.parkedProfiles()))")
     let r = try! k.switchProfile(to: "A")
     check(snapshot(f.game) == want("A"), "back to A from its slot")
-    check(r.cloned == 1 && r.removed == 0, "A's Data needed no file work, only its game-root file (+\(r.cloned) −\(r.removed))")
+    check(r.cloned + r.copied == 1 && r.removed == 0, "A's Data needed no file work, only its game-root file (+\(r.cloned + r.copied) −\(r.removed))")
     check(k.parkedProfiles() == ["B"], "B parked now")
     check((try! k.deployer.verify()).ok, "manifest matches after unparking")
 

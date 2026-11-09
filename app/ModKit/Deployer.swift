@@ -55,6 +55,38 @@ public enum MacCompat {
     }
 }
 
+/// Files macOS itself leaves around, never part of a mod or the game. On volumes without native extended attributes
+/// (exFAT, FAT, network shares) every attribute lives in a visible "._name" file next to "name"; Wine sees those as
+/// ordinary files, so SKSE tried to load "._EngineFixes.dll" as a plugin (GitHub issue #16).
+public enum MacMetadata {
+    /// (Any letter case: manifest keys are lowercased. Called per file on large folders: the first byte decides almost always.)
+    public static func isFile(_ name: String) -> Bool {
+        guard name.utf8.first == UInt8(ascii: ".") else { return false }
+        return name.hasPrefix("._") || name.lowercased() == ".ds_store"
+    }
+    /// A folder (only ever created by macOS's zip tools) or file of that kind.
+    public static func isEntry(_ name: String) -> Bool {
+        isFile(name) || (name.utf8.first == UInt8(ascii: "_") && name.lowercased() == "__macosx")
+    }
+    /// Any part of a relative path.
+    public static func inPath(_ rel: String) -> Bool {
+        var atStart = true, candidate = false
+        for b in rel.utf8 {
+            if atStart && (b == UInt8(ascii: ".") || b == UInt8(ascii: "_")) { candidate = true; break }
+            atStart = b == UInt8(ascii: "/")
+        }
+        return candidate && rel.split(separator: "/").contains { isEntry(String($0)) }
+    }
+    /// Does this volume keep extended attributes inside the file system? APFS and HFS+ do: "._" files there are ordinary
+    /// (harmless) files and are left alone.
+    public static func nativeAttributes(_ path: String) -> Bool {
+        var s = statfs()
+        guard statfs(path, &s) == 0 else { return true }
+        let type = withUnsafePointer(to: &s.f_fstypename) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MFSTYPENAMELEN)) { String(cString: $0) } }
+        return type == "apfs" || type == "hfs"
+    }
+}
+
 public struct DeployPlan {
     public var files: [String: PlannedFile] = [:]           // key = lowercased rel
     public var hidden: [String: String] = [:]               // rel → why it was left out (MacCompat)
@@ -148,6 +180,20 @@ struct Manifest {
     }
 }
 
+/// Copy one file's contents, permissions and dates, without its extended attributes: on a volume without native
+/// attributes those would become a "._name" file next to the copy. Fails if `dst` exists. All or nothing: a copy cut short
+/// (disk full, unplugged drive) must not look like a finished file, or a later deploy takes it for the game's own. The
+/// temporary name is one every scan ignores.
+func copyContents(_ src: String, to dst: String) throws {
+    guard lstatPath(dst) == nil else { throw DeployError.io(String(cString: strerror(EEXIST))) }
+    let tmp = (dst as NSString).deletingLastPathComponent + "/._skyrimmt-" + UUID().uuidString
+    guard copyfile(src, tmp, nil, copyfile_flags_t(COPYFILE_DATA | COPYFILE_STAT)) == 0, rename(tmp, dst) == 0 else {
+        let e = errno
+        unlink(tmp)
+        throw DeployError.io(String(cString: strerror(e)))
+    }
+}
+
 func atomicWrite(_ text: String, to url: URL) throws {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).tmp.\(getpid())")
@@ -225,7 +271,7 @@ public final class Deployer {
             defer { closedir(d) }
             while let e = readdir(d) {
                 let name = withUnsafePointer(to: e.pointee.d_name) { $0.withMemoryRebound(to: CChar.self, capacity: Int(e.pointee.d_namlen) + 1) { String(cString: $0) } }
-                if name == "." || name == ".." { continue }
+                if name == "." || name == ".." || MacMetadata.isEntry(name) { continue }
                 let path = dir + "/" + name, relAny = prefix.isEmpty ? name : prefix + "/" + name
                 var type = e.pointee.d_type
                 if type == DT_UNKNOWN { type = (lstatPath(path)?.isDir ?? false) ? UInt8(DT_DIR) : UInt8(DT_REG) }
@@ -233,7 +279,6 @@ public final class Deployer {
                 let rel: String
                 if relAny.hasPrefix(Deployer.rootFolder + "/") { rel = String(relAny.dropFirst(Deployer.rootFolder.count + 1)) }
                 else { rel = "Data/" + relAny }
-                if name == ".DS_Store" { continue }
                 if name.lowercased().hasSuffix(".mohidden") { continue }   // hidden by the player (MO2 convention)
                 if let why = MacCompat.hideReason(rel: rel, source: path) { hidden.append((rel, why)); continue }
                 files.append((rel, path))
@@ -247,7 +292,22 @@ public final class Deployer {
 
     public func deploy(_ mods: [StagedMod]) throws -> DeployReport {
         try recoverIfNeeded()
-        return try apply(plan(mods).files)
+        let report = try apply(plan(mods).files)
+        sweepMetadata()
+        return report
+    }
+
+    /// Remove "._name" files from the game folder on a volume that creates them for extended attributes (they appear
+    /// next to anything written there, by SkyrimMT, Steam or a tool). They hold metadata only, never game data.
+    /// Returns how many were removed.
+    @discardableResult
+    public func sweepMetadata() -> Int {
+        guard !MacMetadata.nativeAttributes(layout.gameDir.path) else { return 0 }
+        var n = 0
+        for rel in fastFileList(layout.gameDir.path) where ((rel as NSString).lastPathComponent).hasPrefix("._") {
+            if unlink(layout.gameDir.path + "/" + rel) == 0 { n += 1 }
+        }
+        return n
     }
 
     func apply(_ desired: [String: PlannedFile]) throws -> DeployReport {
@@ -319,7 +379,8 @@ public final class Deployer {
             try parallel(rem.count) { i in
                 let e = rem[i].1, path = game + "/" + e.rel
                 guard let st = lstatPath(path) else { return }
-                if st.ino == e.ino && st.dev == e.dev {
+                // (metadata files from an older deploy go even if copied since: another inode, nothing to preserve)
+                if (st.ino == e.ino && st.dev == e.dev) || MacMetadata.inPath(e.rel) {
                     try self.tick()
                     guard unlink(path) == 0 else { throw DeployError.io("remove \(path): \(String(cString: strerror(errno)))") }
                     out[i] = 1
@@ -351,11 +412,13 @@ public final class Deployer {
             }
             todo.append((k, p, srcSt))
         }
-        var knownDirs = Set<String>()
+        var knownDirs = Set<String>(), newDirs: [String] = []
         for t in todo {
             let dir = ((game + "/" + t.file.rel) as NSString).deletingLastPathComponent
-            if knownDirs.insert(dir).inserted { try makeParents(of: game + "/" + t.file.rel, created: &m.createdDirs) }
+            if knownDirs.insert(dir).inserted { try makeParents(of: game + "/" + t.file.rel, created: &m.createdDirs, new: &newDirs) }
         }
+        // one write for all of them: after a failed deploy, recovery still knows which folders are ours to remove
+        if !newDirs.isEmpty { try appendJournal(newDirs.map { "D\t\($0)\n" }.joined()) }
         var how = [UInt8](repeating: 0, count: todo.count)              // 0 already there, 1 clone, 2 link, 3 copy
         var stats = [FileStat?](repeating: nil, count: todo.count)
         try how.withUnsafeMutableBufferPointer { hw in
@@ -390,13 +453,8 @@ public final class Deployer {
         if clonefile(src, dst, 0) == 0 { return 1 }
         if errno == EEXIST { throw DeployError.io("exists: \(dst)") }
         if link(src, dst) == 0 { return 2 }
-        do {
-            try FileManager.default.copyItem(atPath: src, toPath: dst)
-            if let a = try? FileManager.default.attributesOfItem(atPath: src)[.modificationDate] as? Date {
-                try? FileManager.default.setAttributes([.modificationDate: a], ofItemAtPath: dst)
-            }
-            return 3
-        } catch { throw DeployError.io("copy \(src) → \(dst): \(error.localizedDescription)") }
+        do { try copyContents(src, to: dst); return 3 }
+        catch { throw DeployError.io("copy \(src) → \(dst): \(error)") }
     }
 
     /// Run `body(0..<n)` on all cores in chunks; the first error stops the rest and is rethrown.
@@ -414,14 +472,15 @@ public final class Deployer {
         if let e = firstError { throw e }
     }
 
-    private func makeParents(of path: String, created: inout Set<String>) throws {
+    private func makeParents(of path: String, created: inout Set<String>, new: inout [String]) throws {
         let game = layout.gameDir.path
         var dir = (path as NSString).deletingLastPathComponent
         var missing: [String] = []
         while dir.count > game.count, lstatPath(dir) == nil { missing.append(dir); dir = (dir as NSString).deletingLastPathComponent }
         for d in missing.reversed() {
             if mkdir(d, 0o755) != 0 && errno != EEXIST { throw DeployError.io("mkdir \(d): \(String(cString: strerror(errno)))") }
-            created.insert(String(d.dropFirst(game.count + 1)))
+            let rel = String(d.dropFirst(game.count + 1))
+            created.insert(rel); new.append(rel)
         }
     }
 
@@ -467,26 +526,55 @@ public final class Deployer {
         var m = try Manifest.load(layout.manifestURL)
         var desired: [String: PlannedFile] = [:]
         var removes: [String] = []
+        var dropped: [String: String] = [:]   // key → rel: files this deploy can no longer place
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             switch f.first {
-            case "A" where f.count == 4: desired[f[1].lowercased()] = PlannedFile(rel: f[1], source: f[3], modID: f[2])
+            case "A" where f.count == 4:
+                // a journal outlives a failed deploy, and the mod may be reinstalled or removed before the next try (its
+                // folder is gone: this used to fail every later deploy and purge). The next plan decides about these
+                // files; a journal from before MacMetadata may also list "._" files.
+                if lstatPath(f[3]) == nil || MacMetadata.inPath(f[1]) { dropped[f[1].lowercased()] = f[1] }
+                else { desired[f[1].lowercased()] = PlannedFile(rel: f[1], source: f[3], modID: f[2]) }
             case "R" where f.count == 2: removes.append(f[1])
             case "B" where f.count == 3: if m.backups[f[1]] == nil { m.backups[f[1]] = f[2] }
+            case "D" where f.count == 2: m.createdDirs.insert(f[1])
             default: continue
             }
         }
         // unchanged entries of the old manifest stay part of the target
         let removeSet = Set(removes)
-        for (k, e) in m.entries where desired[k] == nil && !removeSet.contains(k) {
+        for (k, e) in m.entries where desired[k] == nil && !removeSet.contains(k) && dropped[k] == nil {
             desired[k] = PlannedFile(rel: e.rel, source: e.source, modID: e.modID)
         }
         var report = DeployReport()
         let adds = desired.keys.filter { m.entries[$0]?.source != desired[$0]!.source }
         // removals whose file is already gone are fine; entries already re-linked count as unchanged
         try execute(&m, desired: desired, removes: removes.filter { m.entries[$0] != nil }, adds: adds, report: &report)
+        try settleDropped(dropped, &m)
         try m.save(layout.manifestURL)
         try FileManager.default.removeItem(at: layout.journalURL)
+    }
+
+    /// Files the failed deploy meant to place and no longer can. What it placed before failing has no manifest entry: left
+    /// there it would pass for the game's own at the next deploy (and come back after every purge). It goes to
+    /// backups (never deleted: if anything here isn't what it seems, it is still there); the game's file comes back.
+    private func settleDropped(_ dropped: [String: String], _ m: inout Manifest) throws {
+        let game = layout.gameDir.path
+        let base = dropped.isEmpty ? [] : Set(((try? String(contentsOf: layout.baselineURL, encoding: .utf8)) ?? "").split(separator: "\n").map { $0.lowercased() })
+        let stamp = Int(Date().timeIntervalSince1970)
+        for (k, rel) in dropped where m.entries[k] == nil {
+            let path = game + "/" + rel
+            if MacMetadata.inPath(rel) { unlink(path); continue }
+            let backup = m.backups[k]
+            // no backup and in the baseline (or no baseline to tell): possibly the game's own, untouched
+            if lstatPath(path) != nil, backup != nil || (!base.isEmpty && !base.contains(k)) {
+                let aside = layout.backupDir.path + "/failed-deploy/\(stamp)/" + rel
+                try FileManager.default.createDirectory(atPath: (aside as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                guard rename(path, aside) == 0 else { throw DeployError.io("move aside \(path): \(String(cString: strerror(errno)))") }
+            }
+            if let b = backup { try restoreBackup(b, to: path); m.backups[k] = nil }
+        }
     }
 
     // MARK: purge / verify / unmanaged
@@ -504,6 +592,7 @@ public final class Deployer {
             try restoreBackup(b, to: layout.gameDir.path + "/" + (b.hasPrefix("files/") ? String(b.dropFirst(6)) : String(b.split(separator: "/", maxSplits: 2).last ?? "")))
             m.backups[k] = nil; report.restored += 1
         }
+        sweepMetadata()   // first: a leftover "._" file would keep a created folder from being removed
         for d in m.createdDirs.sorted(by: { $0.count > $1.count }) { rmdir(layout.gameDir.path + "/" + d) }   // only empty ones go
         m.createdDirs = []
         try m.save(layout.manifestURL)
@@ -514,7 +603,8 @@ public final class Deployer {
 
     public func verify(only include: ((String) -> Bool)? = nil) throws -> VerifyReport {
         let m = try Manifest.load(layout.manifestURL)
-        let list = m.entries.filter { include?($0.key) ?? true }.map(\.value)
+        // (manifests from before MacMetadata can list "._" files: nothing to protect, they go at the next deploy)
+        let list = m.entries.filter { (include?($0.key) ?? true) && !MacMetadata.inPath($0.key) }.map(\.value)
         var state = [UInt8](repeating: 0, count: list.count)   // 0 ok, 1 missing, 2 changed (lstat in parallel)
         let game = layout.gameDir.path
         state.withUnsafeMutableBufferPointer { out in
@@ -565,7 +655,7 @@ public final class Deployer {
         try atomicWrite(listGameFiles().sorted().joined(separator: "\n") + "\n", to: layout.baselineURL)
     }
 
-    func listGameFiles() -> [String] { fastFileList(layout.gameDir.path) }
+    func listGameFiles() -> [String] { fastFileList(layout.gameDir.path).filter { !MacMetadata.inPath($0) } }
 
     /// The game as it was before SkyrimMT deployed anything, as APFS clones in `dir` (no extra space): baseline files,
     /// taken from their backup where a mod replaced them. For tools that must read vanilla files (Wabbajack's game-file

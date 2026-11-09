@@ -29,7 +29,7 @@ extension ModKit {
     func topPlugins(_ id: String) -> [String] {
         guard let m = mod(id) else { return [] }
         return ((try? FileManager.default.contentsOfDirectory(atPath: stagingFolder(m).path)) ?? [])
-            .filter { ModKit.pluginExtensions.contains(($0 as NSString).pathExtension.lowercased()) }
+            .filter { !MacMetadata.isFile($0) && ModKit.pluginExtensions.contains(($0 as NSString).pathExtension.lowercased()) }
     }
 
     /// Active plugins that would stop loading if these mods were off: no other enabled mod and not the game itself

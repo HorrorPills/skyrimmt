@@ -34,6 +34,20 @@ func cleaningTests() {
     write(job.workspace.appendingPathComponent("Data/Dirty.esp"), "clean v1")
     write(xedit.deletingLastPathComponent().appendingPathComponent("SSEEdit_log.txt"), log)
     let r = try! k.finishCleaning(job)
+
+    // without clones: only the plugin is a copy, the rest links to the real Data (nothing reaches the game through it)
+    ModKit.cleaningWithoutClones = true
+    let linked = try! k.prepareCleaning(plugin: "SKYRIM.ESM", xedit: xedit)
+    ModKit.cleaningWithoutClones = false
+    let lData = linked.workspace.appendingPathComponent("Data")
+    let lPlugin = lstatPath(lData.appendingPathComponent("Skyrim.esm").path), lBsa = lData.appendingPathComponent("Skyrim - Textures0.bsa")
+    check(lPlugin != nil && (try? fm.destinationOfSymbolicLink(atPath: lData.appendingPathComponent("Skyrim.esm").path)) == nil, "the plugin itself is a real copy")
+    check((try? fm.destinationOfSymbolicLink(atPath: lBsa.path)) != nil && read(lBsa) == "vanilla bsa", "the rest are links that read through")
+    let gameEsm = try! Data(contentsOf: f.game.appendingPathComponent("Data/Skyrim.esm"))
+    write(lData.appendingPathComponent("Skyrim.esm"), "cleaned copy")
+    check((try! Data(contentsOf: f.game.appendingPathComponent("Data/Skyrim.esm"))) == gameEsm, "editing the copy leaves the game's file alone")
+    try! k.finishCleaning(linked, keep: false)
+    check(!fm.fileExists(atPath: linked.workspace.path) && fm.fileExists(atPath: lBsa.path) == false && read(f.game.appendingPathComponent("Data/Skyrim - Textures0.bsa")) == "vanilla bsa", "removing the workspace removes links only")
     check(r.changed && r.removedITMs == 3 && r.undeletedRefs == 4, "result read back (\(r))")
     check(!fm.fileExists(atPath: job.workspace.path), "workspace removed")
     check(!fm.fileExists(atPath: xedit.deletingLastPathComponent().appendingPathComponent("SSEEdit_log.txt").path)

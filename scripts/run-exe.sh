@@ -9,6 +9,7 @@ exe=${1:?usage: run-exe.sh [--wait] <file.exe> [args…]}; shift
 mkdir -p "$SKYRIM_HOME/logs"
 server_up || record_session_sync   # join a running session with its sync mode
 follow_session_sync
+sweep_mac_metadata   # tools read Data/ too
 cd "$(dirname "$exe")" || exit 1
 echo "== $(date '+%F %T') $exe $*" >> "$SKYRIM_HOME/logs/run-exe.log"
 if [ $wait = 1 ]; then

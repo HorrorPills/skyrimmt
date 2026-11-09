@@ -153,7 +153,7 @@ extension ModKit {
         let root = bodySlideProjectDir
         func xmlFiles(_ sub: String, _ ext: String) -> [URL] {
             guard let en = fm.enumerator(at: root.appendingPathComponent(sub), includingPropertiesForKeys: nil) else { return [] }
-            return (en.allObjects as? [URL] ?? []).filter { $0.pathExtension.lowercased() == ext }.sorted { $0.path < $1.path }
+            return (en.allObjects as? [URL] ?? []).filter { !MacMetadata.isFile($0.lastPathComponent) && $0.pathExtension.lowercased() == ext }.sorted { $0.path < $1.path }
         }
         var groupsOf: [String: [String]] = [:]
         for f in xmlFiles("SliderGroups", "xml") { for g in BSXML.parse(f).groups { for mbr in g.members { groupsOf[mbr, default: []].append(g.name) } } }

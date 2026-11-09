@@ -229,7 +229,7 @@ final class ModManagerModel: ObservableObject {
 
     func label(forVersion v: String) -> String {
         if v == "steam" && kit.isGOG { return "\(versionSteam.isEmpty ? "GOG" : versionSteam) (GOG)" }
-        return v == "steam" ? "\(versionSteam.isEmpty ? "Steam" : versionSteam) (Steam, auto-updates)" : "\(v) (pinned)"
+        return v == "steam" ? localizedFormat("%@ (Steam, auto-updates)", versionSteam.isEmpty ? "Steam" : versionSteam) : localizedFormat("%@ (pinned)", v)
     }
 
     /// The version key a profile runs on. The GOG version has no pinned versions: always its own install.

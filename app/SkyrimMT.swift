@@ -36,19 +36,17 @@ enum AppLanguage {
 
     static var saved: String { UserDefaults.standard.string(forKey: defaultsKey) ?? "" }
 
+    /// Only a choice made here touches AppleLanguages: without one, a language set for SkyrimMT in System Settings stays.
     static func applySaved() {
-        let code = saved
-        if code.isEmpty {
-            UserDefaults.standard.removeObject(forKey: "AppleLanguages")
-        } else {
-            UserDefaults.standard.set([code], forKey: "AppleLanguages")
-        }
+        if !saved.isEmpty { UserDefaults.standard.set([saved], forKey: "AppleLanguages") }
     }
 
     static func relaunch(selecting code: String) {
         guard code != saved else { return }
         UserDefaults.standard.set(code, forKey: defaultsKey)
+        if code.isEmpty { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
         applySaved()
+        UserDefaults.standard.set(NSApp.windows.contains { $0.title == "SkyrimMT Mods" && $0.isVisible }, forKey: "reopenModManager")
         let pid = ProcessInfo.processInfo.processIdentifier
         _ = spawnDetached(["/bin/bash", "-c", "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; open \"$1\"", "relaunch", Bundle.main.bundlePath])
         NSApp.terminate(nil)
@@ -604,10 +602,12 @@ final class Launcher: ObservableObject {
         Session.ensureHelper()
         message = localized("Opening Steam. Sign in, then come back here.")
         Task.detached { SessionRunner.runSync([Paths.script("steam.sh"), "--login"], env: scriptEnv(removing: ["MTL_HUD_ENABLED"])) }
+        raiseSteamWindow()
     }
 
     func installSkyrim() {
         Session.ensureHelper()
+        raiseSteamWindow()
         Task.detached {
             let r = SessionRunner.runSync([Paths.script("install-skyrim.sh")])
             await MainActor.run { self.message = r.output.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -892,12 +892,7 @@ final class Launcher: ObservableObject {
             defer { focusingGame = false }
             func sleep(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }
             func window(_ pids: [pid_t], minWidth: CGFloat = 300, minHeight: CGFloat = 200) -> pid_t? {
-                let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
-                return list.lazy.compactMap { w -> pid_t? in
-                    guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, pids.contains(pid), (w[kCGWindowLayer as String] as? Int) == 0,
-                          let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Width"] ?? 0) >= minWidth, (b["Height"] ?? 0) >= minHeight else { return nil }
-                    return pid
-                }.first
+                Launcher.windowOwner(among: pids, minWidth: minWidth, minHeight: minHeight)
             }
             var game: pid_t?, raisedDialog = false
             for _ in 0..<480 where game == nil {   // a big mod list can take minutes to open its window
@@ -929,6 +924,34 @@ final class Launcher: ObservableObject {
         }
     }
     private var focusingGame = false
+    /// The process among `pids` with a normal window of at least this size on screen.
+    nonisolated static func windowOwner(among pids: [pid_t], minWidth: CGFloat = 300, minHeight: CGFloat = 200) -> pid_t? {
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        return list.lazy.compactMap { w -> pid_t? in
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, pids.contains(pid), (w[kCGWindowLayer as String] as? Int) == 0,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Width"] ?? 0) >= minWidth, (b["Height"] ?? 0) >= minHeight else { return nil }
+            return pid
+        }.first
+    }
+    /// Steam's sign-in and install windows open behind the launcher (macOS doesn't let a background app come forward), so
+    /// "Sign in to Steam in the window that opened" pointed at nothing visible. Brought forward once, when it appears, and
+    /// only while the launcher is the front app. A first run updates Steam first (its small updater window doesn't count).
+    private func raiseSteamWindow() {
+        guard !raisingSteam else { return }
+        raisingSteam = true
+        Task { @MainActor in
+            defer { raisingSteam = false }
+            let me = ProcessInfo.processInfo.processIdentifier
+            for _ in 0..<600 {
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == me, let steam = Launcher.windowOwner(among: self.steamPIDs) {
+                    _ = Launcher.bringToFront(steam)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+    }
+    private var raisingSteam = false
     /// Seconds from the game's window to the alt-tab: by then it has asked for the hide (window up → request: under 5 s).
     static let cursorSettle = 8.0
     static let canHidePointer: Bool = {
@@ -1113,9 +1136,6 @@ enum SessionRunner {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        AppLanguage.applySaved()
-    }
     /// nxm:// links (Nexus "Mod Manager Download"): handed to the mod manager, whose window opens.
     func application(_ application: NSApplication, open urls: [URL]) {
         // skyrim-rp:// (Keizaal Online's Discord login coming back from the browser): to its launcher in the prefix
@@ -1508,6 +1528,7 @@ struct ContentView: View {
         }
         .overlay { if mods.versionDownloading != nil { VersionDownloadView(mods: mods) } }
         .onChange(of: mods.versionCurrent) { _ in launcher.refreshSettings() }
+        .onChange(of: mods.busy) { busy in if busy == nil { launcher.refreshSettings() } }   // a deploy may have added SKSE: don't wait for the 30 s poll
         .onChange(of: launcher.checksKnown) { known in if known && !launcher.setupComplete { tabRaw = Tab.setup.rawValue } }
         .onAppear {
             if UserDefaults.standard.bool(forKey: "reopenModManager") {   // restarted by a game folder switch

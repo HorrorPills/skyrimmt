@@ -179,7 +179,7 @@
 "Add your Nexus Mods API key first." = "请先添加 Nexus Mods API 密钥。";
 "Switch “%@” to Skyrim %@ first (Game tab)." = "请先把“%@”切换到天际 %@（游戏页）。";
 "Restoring the load order of %@…" = "正在恢复 %@ 的加载顺序…";
-"Load order of “%@” restored from %@ rev %@ (%ld active plugins)." = "“%@”的加载顺序已从 %@ 修订 %@ 恢复（%ld 个启用插件）。";
+"Load order of “%@” restored from %@ rev %ld (%ld active plugins)." = "“%@”的加载顺序已从 %@ 修订 %ld 恢复（%ld 个启用插件）。";
 "Restore failed: %@" = "恢复失败：%@";
 "Enabling instant switching…" = "正在启用瞬时切换…";
 "Disabling instant switching…" = "正在关闭瞬时切换…";
@@ -479,7 +479,7 @@
 "Animations need regenerating" = "动画需要重新生成";
 "Animation mods changed since Pandora last ran." = "自 Pandora 上次运行以来，动画模组已更改。";
 "Generate" = "生成";
-"%@ has a new revision (%@)" = "%@ 有新修订（%@）";
+"%@ has a new revision (%ld)" = "%@ 有新修订（%ld）";
 "What changes: %@. Your own additions to its profile stay." = "变更内容：%@。你在其配置档中自己添加的内容会保留。";
 "%@ %@ is out (you have %@)" = "%@ %@ 已发布（你当前是 %@）";
 "Updating reuses everything already downloaded and keeps the mods you added to “%@”." = "更新会复用已下载的内容，并保留你添加到“%@”的模组。";
@@ -564,8 +564,8 @@
 "Keep disabled, test next" = "保持禁用，测试下一个";
 "Keep disabled" = "保持禁用";
 "No crash in %ld minutes without **%@**. It is most likely the cause." = "%ld 分钟内在不加载 **%@** 的情况下没有崩溃。它很可能就是原因。";
-"%ld minute played without a crash. Play at least %ld minutes in total to confirm." = "已无崩溃游玩 %ld 分钟。总共至少再玩 %ld 分钟以确认。";
-"%ld minutes played without a crash. Play at least %ld minutes in total to confirm." = "已无崩溃游玩 %ld 分钟。总共至少再玩 %ld 分钟以确认。";
+"%ld minute played without a crash. Play at least %ld minutes in total to confirm." = "已无崩溃游玩 %ld 分钟。总共至少玩 %ld 分钟才能确认。";
+"%ld minutes played without a crash. Play at least %ld minutes in total to confirm." = "已无崩溃游玩 %ld 分钟。总共至少玩 %ld 分钟才能确认。";
 "Crash on %@" = "%@ 的崩溃";
 "This crash happened in profile “%@”." = "这次崩溃发生在配置档“%@”。";
 "Switch to it" = "切换过去";
@@ -1129,3 +1129,33 @@
 "LAUNCHING" = "启动中";
 "Online" = "在线";
 "Start Keizaal Online" = "启动 Keizaal Online";
+
+/* Added after 1.0.4: drives that aren't APFS. */
+"This drive isn't formatted as APFS" = "此磁盘不是 APFS 格式";
+"Use This Drive" = "使用此磁盘";
+"Skyrim and mods will work, but each deployed mod takes its full size a second time and deploying is much slower. For the best result, use an APFS drive." = "天际和模组都能运行，但每个已部署的模组会再占用一份完整空间，部署也会慢很多。建议使用 APFS 磁盘以获得最佳效果。";
+
+/* Strings added after the first Chinese catalogue. */
+"SKSE mods will not load until SKSE matches. Install the GOG build of SKSE for %@." = "在 SKSE 匹配之前，SKSE 模组不会加载。请安装适用于 %@ 的 GOG 版 SKSE。";
+"Updated: %@." = "已更新：%@。";
+"Wabbajack lists are made for the Steam version of Skyrim and can't be installed on the GOG version. Collections and single mods work." = "Wabbajack 列表是为 Steam 版天际制作的，无法安装到 GOG 版。合集和单个模组可以使用。";
+"Skyrim (GOG)" = "天际（GOG）";
+"Skyrim %@ (GOG)" = "天际 %@（GOG）";
+"Re-read mods, plugins, downloads and tools from disk (⌘R)" = "从磁盘重新读取模组、插件、下载和工具（⌘R）";
+"Activity: everything SkyrimMT did in this session" = "活动：SkyrimMT 在本次会话中所做的一切";
+"Installed mods are not affected. The archive is only needed to reinstall." = "已安装的模组不受影响。压缩包只在重新安装时需要。";
+"Restores the author's plugin order and active plugins. Mods are not changed." = "恢复作者的插件顺序和启用的插件。模组不会更改。";
+"Checks the collection again. Installed mods are reused; only missing ones are added." = "重新检查合集。已安装的模组会被复用；只添加缺失的模组。";
+"This profile only. Off for profiles installed from a collection, like Vortex." = "仅限此配置档。从合集安装的配置档默认关闭，与 Vortex 相同。";
+"Add known tool" = "添加已知工具";
+"Only one body can provide the body meshes. Automatic uses the installed body project." = "只能有一个身体提供身体网格。自动模式使用已安装的身体项目。";
+"Morphs" = "变形";
+"Builds .tri morph files for RaceMenu/OBody sliders. Automatic enables this when RaceMenu is installed." = "为 RaceMenu/OBody 滑条生成 .tri 变形文件。自动模式会在已安装 RaceMenu 时启用。";
+"Imports a Mod Organizer 2 setup (mods, order, plugins, INIs) as a profile." = "把 Mod Organizer 2 配置（模组、顺序、插件、INI）导入为配置档。";
+"It was made for Skyrim %@ (Steam); SKSE plugins built only for that version will not load on GOG %@ (Health shows them)." = "它是为天际 %@（Steam）制作的；仅为该版本构建的 SKSE 插件无法在 GOG %@ 上加载（健康页会列出它们）。";
+"Profile" = "配置档";
+"Body" = "身体";
+"Preset" = "预设";
+"Installing from GOG… %lld%%" = "正在从 GOG 安装… %lld%%";
+"%@ (Steam, auto-updates)" = "%@（Steam，自动更新）";
+"%@ (pinned)" = "%@（已固定）";

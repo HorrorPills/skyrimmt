@@ -377,22 +377,11 @@ final class Launcher: ObservableObject {
         }
     }
 
-    /// DXMT build pinned in config/release.conf (scripts/dxmt.sh installs it); nil: the runtime's own — also on a macOS
-    /// older than DXMT_MIN_MACOS, which can't run the pinned build's shaders (black screen, issue #24; same rule as
-    /// `dxmt.sh wanted`).
+    /// DXMT build pinned in config/release.conf (scripts/dxmt.sh installs it); nil: the runtime's own.
     static var pinnedDXMT: String? {
         let conf = (try? String(contentsOfFile: Paths.releaseConf, encoding: .utf8)) ?? ""
-        func value(_ key: String) -> String? {
-            conf.split(separator: "\n").first { $0.hasPrefix(key + "=") }
-                .map { String($0.dropFirst(key.count + 1)).trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")) }?.nonEmpty
-        }
-        guard let pinned = value("DXMT_VERSION") else { return nil }
-        if let min = value("DXMT_MIN_MACOS").flatMap(Int.init) {
-            let os = ProcessInfo.processInfo.environment["SKYRIMMT_MACOS_VERSION"].flatMap { Int($0.split(separator: ".").first ?? "") }
-                ?? ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-            if os < min { return nil }
-        }
-        return pinned
+        return conf.split(separator: "\n").first { $0.hasPrefix("DXMT_VERSION=") }
+            .map { String($0.dropFirst("DXMT_VERSION=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")) }?.nonEmpty
     }
     /// Runtime version this SkyrimMT ships (config/release.conf RUNTIME_VERSION); nil: not pinned.
     static var pinnedRuntime: String? {

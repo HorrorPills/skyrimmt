@@ -8,7 +8,9 @@
 #   SKYRIMMT_FRAMETRACE=<file.csv>  record Present timing (tools/frametrace proxy d3d11.dll; DXMT only)
 #   SKYRIMMT_METAL_HUD=1            Metal performance HUD overlay
 #   SKYRIMMT_USE_SKSE=0|1           start through skse64_loader.exe when SKSE is installed (default 1); the version
-#                                   guard falls back to SkyrimSE.exe when SKSE was built for another game version
+#                                   guard falls back to SkyrimSE.exe when SKSE was built for another game version,
+#                                   unless config/skse-any-version exists (Mods tab → "Start SKSE anyway": setups that
+#                                   bring their own downgrade step, issue #20)
 . "$(dirname "$0")/_env.sh"
 mkdir -p "$SKYRIM_HOME/logs"; LOG="$SKYRIM_HOME/logs/skyrim.log"
 [ -f "$GAMEDIR/SkyrimSE.exe" ] || { echo "Skyrim is not installed"; exit 1; }
@@ -118,6 +120,7 @@ if [ "${SKYRIMMT_USE_SKSE:-1}" = 1 ] && [ -f skse64_loader.exe ]; then
   gv=$("$SKYRIMMT_ROOT/scripts/settings.sh" status | sed -n 's/^game_version=//p'); gv=${gv%.0}
   sv=$("$SKYRIMMT_ROOT/scripts/settings.sh" status | sed -n 's/.*skse_for=//p')
   if [ -n "$sv" ] && [ "$sv" = "$gv" ]; then exe=skse64_loader.exe
+  elif [ -f "$SKYRIM_HOME/config/skse-any-version" ]; then exe=skse64_loader.exe; echo "SKSE is for Skyrim ${sv:-?}, the game is $gv — starting SKSE anyway (Start SKSE anyway is on)"
   else echo "SKSE is for Skyrim ${sv:-?}, the game is $gv — starting without SKSE"; fi
 fi
 sweep_mac_metadata   # exFAT etc.: SKSE would try to load "._Name.dll" as a plugin (see _env.sh)

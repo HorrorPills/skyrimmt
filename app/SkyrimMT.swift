@@ -445,6 +445,18 @@ final class Launcher: ObservableObject {
         message = v == "keep" ? "Window size: the profile's own setting." : "Window size applies at the next launch."
     }
 
+    /// Start SKSE even when it was built for another game version (config/skse-any-version, read by scripts/skyrim.sh):
+    /// for setups that bring their own downgrade step, e.g. collections with an older SKSE (issue #20). Per game folder.
+    @Published var skseAnyVersion = exists(Paths.game + "/config/skse-any-version")
+    func setSkseAnyVersion(_ on: Bool) {
+        let f = Paths.game + "/config/skse-any-version"
+        if on {
+            try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
+            try? "1\n".write(toFile: f, atomically: true, encoding: .utf8)
+        } else { try? FileManager.default.removeItem(atPath: f) }
+        skseAnyVersion = exists(f)
+    }
+
     @Published var audioMixRate: String = (try? String(contentsOfFile: Paths.game + "/config/audio-mix-rate", encoding: .utf8))?
         .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "96000"
     func setAudioMixRate(_ v: String) {
@@ -533,6 +545,11 @@ final class Launcher: ObservableObject {
             Task { @MainActor in
                 self.setupRunning = false
                 self.message = code == 0 ? "Setup finished." : "Setup stopped. See the log above."
+                if code != 0, self.setupLog.contains(where: { $0.contains("Operation not permitted") }) {
+                    // macOS asks once per app before it lets it use an external drive; refused (or not answered yet), the
+                    // scripts can't write to the game folder
+                    self.message = localized("macOS blocked the drive. In Privacy & Security → Files & Folders, allow SkyrimMT Session.")
+                }
                 if code != 0 { self.autoSetup = false }
                 self.artVersion += 1
                 self.refreshSettings(); self.refresh()
@@ -542,7 +559,15 @@ final class Launcher: ObservableObject {
                 }
             }
         })
-        if !started { setupRunning = false; setupLog = ["FAIL couldn't start setup.sh"] }
+        if !started { setupRunning = false; setupLog = ["FAIL couldn't start setup.sh"]; return }
+        // setup.sh reports its first step at once: silence means it is waiting for the game folder — on an external drive,
+        // usually macOS's question whether SkyrimMT Session may use it (the window can open behind others)
+        let log = setupLog.count
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard let self, self.setupRunning, self.setupLog.count == log, self.setupLog.isEmpty else { return }
+            self.message = localized("Waiting for the drive. If macOS asks whether SkyrimMT Session may use it, click Allow.")
+        }
     }
 
     var runtimeURLConfigured: Bool {
@@ -820,8 +845,6 @@ final class Launcher: ObservableObject {
         guard !otherSteam else { message = localized("tf2mt's Steam is running with the same account. Close it first."); return }
         launching = true
         let mk = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
-        mk.recordLaunch()                 // crash analysis knows the profile
-        mk.restoreDriftedBinaries()       // plugin DLLs that came back changed from the last run (Wine) → mod's copy
         Session.ensureHelper()
         message = isGOG || steam == .online ? "Starting Skyrim…" : "Starting Steam — waiting for login…"
         var extra: [String: String] = ["SKYRIMMT_USE_SKSE": skse ? "1" : "0"]
@@ -833,6 +856,9 @@ final class Launcher: ObservableObject {
         let env = scriptEnv(extra, removing: ["MTL_HUD_ENABLED"])
         let args = [Paths.script("play.sh")] + extraArgs.split(separator: " ").map(String.init)
         Task.detached {
+            // game-folder work off the main thread (a slow or external drive must never freeze the launcher)
+            mk.recordLaunch()                 // crash analysis knows the profile
+            mk.restoreDriftedBinaries()       // plugin DLLs that came back changed from the last run (Wine) → mod's copy
             try? FileManager.default.createDirectory(atPath: Paths.logs, withIntermediateDirectories: true)
             let r = SessionRunner.runSync(args, env: env)
             let logURL = URL(fileURLWithPath: Paths.logs + "/launcher.log")
@@ -860,12 +886,16 @@ final class Launcher: ObservableObject {
         guard !otherSteam else { message = localized("tf2mt's Steam is running with the same account. Close it first."); return }
         launching = true; launchingKeizaal = true
         let mk = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
-        mk.recordLaunch()
-        mk.restoreDriftedBinaries()
-        do { try mk.writeVortexDeployment() } catch { message = localizedFormat("Couldn't list the deployed files for Keizaal: %@", "\(error)") }
         Session.ensureHelper()
         message = isGOG || steam == .online ? "Opening Keizaal Online…" : "Starting Steam — waiting for login…"
         Task.detached {
+            // game-folder work off the main thread (a slow or external drive must never freeze the launcher)
+            mk.recordLaunch()
+            mk.restoreDriftedBinaries()
+            do { try mk.writeVortexDeployment() } catch {
+                let m = localizedFormat("Couldn't list the deployed files for Keizaal: %@", "\(error)")
+                await MainActor.run { self.message = m }
+            }
             let r = SessionRunner.runSync([Paths.script("keizaal.sh")])
             let logURL = URL(fileURLWithPath: Paths.logs + "/launcher.log")
             if let h = try? FileHandle(forWritingTo: logURL) {
@@ -1068,10 +1098,15 @@ enum Session {
             try? FileManager.default.removeItem(atPath: launcherPidFile)
         }
     }
-    /// Start the session helper unless one is running. Returns at once.
-    static func ensureHelper() {
+    /// Start the session helper unless one is running. Never waits on the main thread: the helper runs through the
+    /// Session app, and when that app can't get at the game folder (an external drive macOS hasn't allowed yet) the
+    /// launcher froze waiting for it (GitHub issue #23). `waitAtMost`: wait that long for it to have started (on quit).
+    static func ensureHelper(waitAtMost seconds: Double? = nil) {
         guard exists(Paths.script("session-helper.sh")) else { return }
-        SessionRunner.runSync([Paths.script("session-helper.sh"), "--spawn"])
+        let args = [Paths.script("session-helper.sh"), "--spawn"], env = scriptEnv()
+        if let seconds { _ = SessionRunner.runSync(args, env: env, timeout: seconds); return }
+        if Thread.isMainThread { DispatchQueue.global(qos: .userInitiated).async { _ = SessionRunner.runSync(args, env: env, timeout: 120) } }
+        else { _ = SessionRunner.runSync(args, env: env, timeout: 120) }
     }
 }
 
@@ -1080,6 +1115,8 @@ enum Session {
 /// its script), Steam/Wine/Skyrim belong to no visible app, so quitting SkyrimMT really quits it.
 enum SessionRunner {
     static var appPath: String { Bundle.main.bundlePath + "/Contents/Helpers/SkyrimMT Session.app" }
+    /// Output and exit codes of requests (per user, on the startup disk).
+    static var requestDir: String { NSTemporaryDirectory() + "SkyrimMT-session" }
     static var available: Bool { exists(appPath + "/Contents/MacOS/skyrimmt-session") }
 
     @discardableResult
@@ -1088,10 +1125,12 @@ enum SessionRunner {
         guard available else {   // dev build without the helper app
             return spawnDetached(["/bin/bash"] + scriptArgs, env: env, onOutput: onOutput ?? { _ in }, onExit: onExit)
         }
-        let dir = Session.runDir
+        // the request's output and exit code live on the Mac's own disk, never in the game folder: the Session app must be
+        // able to report back even when it can't get at an external drive (issue #23)
+        let dir = SessionRunner.requestDir
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let out = dir + "/req-\(UUID().uuidString).log"
-        FileManager.default.createFile(atPath: out, contents: nil)
+        guard FileManager.default.createFile(atPath: out, contents: nil) else { return false }
         var openArgs = ["/usr/bin/open", "-n", "-g", "-j"]
         var e = env.filter { k, _ in ["SKYRIM", "MTL_", "WINE", "MVK", "DYLD", "DXMT", "TF2_HOME"].contains { k.hasPrefix($0) } }
         e["SKYRIMMT_OUT"] = out
@@ -1123,14 +1162,16 @@ enum SessionRunner {
         return true
     }
 
-    /// Same, waiting for the result (call off the main thread).
-    static func runSync(_ scriptArgs: [String], env: [String: String] = scriptEnv()) -> (status: Int32, output: String) {
+    /// Same, waiting for the result (call off the main thread). `timeout`: give up waiting after that many seconds.
+    static func runSync(_ scriptArgs: [String], env: [String: String] = scriptEnv(), timeout: Double? = nil) -> (status: Int32, output: String) {
         let done = DispatchSemaphore(value: 0)
         var lines: [String] = []; var code: Int32 = -1
         let lock = NSLock()
         guard run(scriptArgs, env: env, onOutput: { l in lock.lock(); lines.append(l); lock.unlock() },
-                  onExit: { c in code = c; done.signal() }) else { return (-1, "couldn't start \(scriptArgs.first ?? "")") }
-        done.wait()
+                  onExit: { c in lock.lock(); code = c; lock.unlock(); done.signal() }) else { return (-1, "couldn't start \(scriptArgs.first ?? "")") }
+        if let timeout { if done.wait(timeout: .now() + timeout) == .timedOut { return (-1, "\((scriptArgs.first as NSString?)?.lastPathComponent ?? "script") didn't finish in time") } }
+        else { done.wait() }
+        lock.lock(); defer { lock.unlock() }
         return (code, lines.joined(separator: "\n"))
     }
 }
@@ -1153,7 +1194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // hand the session to the helper and quit immediately (Dock Quit, Cmd-Q, closing the window, updater)
         Session.markLauncherGone()
-        Session.ensureHelper()
+        Session.ensureHelper(waitAtMost: 5)
         return .terminateNow
     }
 }
@@ -1817,8 +1858,13 @@ struct ContentView: View {
             }
             if s.skse {
                 OptionRow(title: "Launch with SKSE",
-                          detail: s.skseMismatch ? "Off automatically until SKSE matches the game version." : "Play starts Skyrim through skse64_loader.exe.",
+                          detail: s.skseMismatch && !launcher.skseAnyVersion ? "Off automatically until SKSE matches the game version." : "Play starts Skyrim through skse64_loader.exe.",
                           isOn: $useSKSE)
+                if s.skseMismatch || launcher.skseAnyVersion {
+                    OptionRow(title: "Start SKSE anyway",
+                              detail: "For setups that bring their own downgrade (some collections). If the game really doesn't match, SKSE shows an error and stops.",
+                              isOn: Binding(get: { launcher.skseAnyVersion }, set: { launcher.setSkseAnyVersion($0) }))
+                }
             }
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "list.bullet").font(.system(size: 15)).foregroundStyle(Color.skCream.opacity(0.6)).frame(width: 22)

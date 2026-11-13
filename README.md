@@ -40,7 +40,7 @@ Skyrim Special Edition / Anniversary Edition on Apple Silicon Macs — one-click
 | ![Tools](docs/screenshots/tools.png) **Tools** — LOOT, Pandora, BodySlide, Windows tools | |
 
 ## Requirements
-- Apple Silicon, macOS 13 or newer
+- Apple Silicon, macOS 15 Sequoia or newer (on macOS 14 and older the game renders a black screen)
 - Skyrim Special Edition / Anniversary Edition on Steam, or on GOG (the offline installers from your GOG library)
 - ~25 GB free disk space
 - Nexus Mods account (Premium for fully automatic downloads)

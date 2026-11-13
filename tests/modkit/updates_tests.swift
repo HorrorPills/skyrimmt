@@ -454,6 +454,46 @@ func wabbajackCacheTests() {
     check(freed == size && ((try? fm.contentsOfDirectory(atPath: k.wabbajackDownloadsDir.path)) ?? ["?"]).isEmpty, "cache emptied, folder kept")
 }
 
+/// GitHub issue #22: Wabbajack's BSA builder holds every file of the archive open at once; under an app's default soft
+/// limit of 256 open files it failed with "Too many open files". A stand-in engine (C) reports its limit, then opens
+/// 3,000 files at the same time the way BuildBSAs does.
+func wabbajackOpenFilesTests() {
+    section("Wabbajack engine: open-file limit (issue #22)")
+    let f = Fixture("wjfiles")
+    let dir = freshDir("wjfiles-engine"), src = dir.appendingPathComponent("engine.c"), engine = dir.appendingPathComponent("jackify-engine")
+    try! #"""
+    #include <stdio.h>
+    #include <fcntl.h>
+    #include <errno.h>
+    #include <string.h>
+    #include <sys/resource.h>
+    int main(int argc, char **argv) {
+        struct rlimit r; getrlimit(RLIMIT_NOFILE, &r); printf("soft limit %llu\n", (unsigned long long)r.rlim_cur);
+        const char *out = argv[argc - 3]; char p[4096]; int n = 0;   /* … -o <out> -d <downloads> */
+        for (int i = 0; i < 3000; i++) {
+            snprintf(p, sizeof p, "%s/f%d.nif", out, i);
+            if (open(p, O_CREAT | O_RDWR, 0644) < 0) { printf("{\"je\":\"1\",\"level\":\"error\",\"message\":\"%s after %d files\"}\n", strerror(errno), n); return 1; }
+            n++;
+        }
+        printf("opened %d files at once\n", n); return 0;
+    }
+    """#.write(to: src, atomically: true, encoding: .utf8)
+    guard Installer.run("/usr/bin/clang", ["-O1", src.path, "-o", engine.path]).0 == 0 else { check(false, "stand-in engine builds"); return }
+    // what an app starts with
+    var low = rlimit(); getrlimit(RLIMIT_NOFILE, &low); let saved = low; low.rlim_cur = 256; setrlimit(RLIMIT_NOFILE, &low)
+    defer { var s = saved; setrlimit(RLIMIT_NOFILE, &s) }
+    let e = WabbajackEngine(engine: engine, wine: URL(fileURLWithPath: "/usr/bin/true"), shim: URL(fileURLWithPath: "/usr/bin/true"))
+    var lines: [String] = []
+    do {
+        _ = try f.kit.runWabbajack(e, source: "author/list", listName: "Big BSA", gameDir: f.game, nexusKey: nil) { l, _ in lines.append(l) }
+        check(lines.contains("opened 3000 files at once"), "3,000 files open at once (\(lines))")
+    } catch { check(false, "engine run: \(error) (\(lines))") }
+    let limit = lines.first { $0.hasPrefix("soft limit ") }.flatMap { Int($0.dropFirst(11)) } ?? 0
+    check(limit >= 10240, "the engine gets a high limit (\(limit))")
+    var now = rlimit(); getrlimit(RLIMIT_NOFILE, &now)
+    check(now.rlim_cur == 256, "SkyrimMT's own limit is unchanged (\(now.rlim_cur))")
+}
+
 func modListMarkdownTests() {
     section("mod list for help requests")
     let f = Fixture("modlistmd")

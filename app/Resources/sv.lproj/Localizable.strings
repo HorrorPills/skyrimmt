@@ -1226,5 +1226,7 @@
 "Improved menus and the mod configuration menu (MCM)." = "Förbättrade menyer och moddinställningsmenyn (MCM).";
 "Needs SKSE." = "Kräver SKSE.";
 "Choose the All in One file on Nexus." = "Välj filen All in One på Nexus.";
+"Start SKSE anyway" = "Starta SKSE ändå";
+"For setups that bring their own downgrade (some collections). If the game really doesn't match, SKSE shows an error and stops." = "För uppsättningar som har en egen nedgradering (vissa samlingar). Om spelet verkligen inte passar visar SKSE ett fel och stannar.";
 "macOS blocked the drive. In Privacy & Security → Files & Folders, allow SkyrimMT Session." = "macOS blockerade enheten. Tillåt SkyrimMT Session under Integritet och säkerhet → Filer och mappar.";
 "Waiting for the drive. If macOS asks whether SkyrimMT Session may use it, click Allow." = "Väntar på enheten. Om macOS frågar om SkyrimMT Session får använda den, klicka på Tillåt.";

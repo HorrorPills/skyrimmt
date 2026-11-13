@@ -456,6 +456,18 @@ final class Launcher: ObservableObject {
         message = v == "keep" ? "Window size: the profile's own setting." : "Window size applies at the next launch."
     }
 
+    /// Start SKSE even when it was built for another game version (config/skse-any-version, read by scripts/skyrim.sh):
+    /// for setups that bring their own downgrade step, e.g. collections with an older SKSE (issue #20). Per game folder.
+    @Published var skseAnyVersion = exists(Paths.game + "/config/skse-any-version")
+    func setSkseAnyVersion(_ on: Bool) {
+        let f = Paths.game + "/config/skse-any-version"
+        if on {
+            try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
+            try? "1\n".write(toFile: f, atomically: true, encoding: .utf8)
+        } else { try? FileManager.default.removeItem(atPath: f) }
+        skseAnyVersion = exists(f)
+    }
+
     @Published var audioMixRate: String = (try? String(contentsOfFile: Paths.game + "/config/audio-mix-rate", encoding: .utf8))?
         .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "96000"
     func setAudioMixRate(_ v: String) {
@@ -1857,8 +1869,13 @@ struct ContentView: View {
             }
             if s.skse {
                 OptionRow(title: "Launch with SKSE",
-                          detail: s.skseMismatch ? "Off automatically until SKSE matches the game version." : "Play starts Skyrim through skse64_loader.exe.",
+                          detail: s.skseMismatch && !launcher.skseAnyVersion ? "Off automatically until SKSE matches the game version." : "Play starts Skyrim through skse64_loader.exe.",
                           isOn: $useSKSE)
+                if s.skseMismatch || launcher.skseAnyVersion {
+                    OptionRow(title: "Start SKSE anyway",
+                              detail: "For setups that bring their own downgrade (some collections). If the game really doesn't match, SKSE shows an error and stops.",
+                              isOn: Binding(get: { launcher.skseAnyVersion }, set: { launcher.setSkseAnyVersion($0) }))
+                }
             }
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "list.bullet").font(.system(size: 15)).foregroundStyle(Color.skCream.opacity(0.6)).frame(width: 22)

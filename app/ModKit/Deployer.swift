@@ -210,6 +210,11 @@ func atomicWrite(_ text: String, to url: URL) throws {
 }
 
 struct FileStat { let dev: Int64; let ino: UInt64; let size: Int64; let mtimeNs: Int64; let isDir: Bool }
+/// Device number of the volume holding `path` now (stat follows a symlinked game folder).
+func volumeDevice(_ path: String) -> Int64? {
+    var st = stat()
+    return stat(path, &st) == 0 ? Int64(st.st_dev) : nil
+}
 func lstatPath(_ path: String) -> FileStat? {
     var st = stat()
     guard lstat(path, &st) == 0 else { return nil }
@@ -224,6 +229,26 @@ public final class Deployer {
     public var failAfterOps: Int?
     private var ops = 0
     public static let rootFolder = "__root__"
+
+    /// Is the file at a deployed path still the one we placed (or a copy of it)? GitHub issue #21: on external drives
+    /// every deployed file read as "changed outside SkyrimMT", so deploys left removed mods in the game, Play copied every
+    /// program file again and a profile switch moved the whole game into Overwrite.
+    /// - Its inode decides — with the recorded device number only while the volume still has it: macOS numbers devices
+    ///   per mount, so a drive reconnected, mounted after another one or after a restart comes back with a new st_dev and
+    ///   every inode unchanged. A recorded device that isn't the game folder's volume now (`volume`, volumeDevice(gameDir)
+    ///   looked up once per pass) is such an old number.
+    /// - Or it is a copy: the SkyrimMT folder copied to another drive gives every file a new inode, size and date stay.
+    ///   Recorded dates are the mod files' own (clones, links and our copies keep them); anything that writes the file sets
+    ///   the current time. The date must match to the nanosecond — unless the drive stores coarser dates (exFAT 10 ms,
+    ///   HFS+ 1 s, FAT 2 s: no part below 10 ms), then within 2 s.
+    static func sameFile(_ st: FileStat, _ e: ManifestEntry, volume: Int64?) -> Bool {
+        if st.ino == e.ino {
+            if st.dev == e.dev { return true }
+            if let volume, st.dev == volume, e.dev != volume { return true }
+        }
+        guard !st.isDir, st.size == e.size else { return false }
+        return st.mtimeNs == e.mtimeNs || (st.mtimeNs % 10_000_000 == 0 && abs(st.mtimeNs - e.mtimeNs) < 2_000_000_000)
+    }
 
     public init(layout: GameLayout) { self.layout = layout }
 
@@ -374,13 +399,14 @@ public final class Deployer {
         let addSet = Set(adds)
         // 1. removals (parallel): only files that are still exactly what we deployed
         let rem: [(String, ManifestEntry)] = removes.compactMap { k in m.entries[k].map { (k, $0) } }
+        let volume = volumeDevice(game)
         var outcome = [UInt8](repeating: 0, count: rem.count)          // 0 gone already, 1 removed, 2 modified → kept
         try outcome.withUnsafeMutableBufferPointer { out in
             try parallel(rem.count) { i in
                 let e = rem[i].1, path = game + "/" + e.rel
                 guard let st = lstatPath(path) else { return }
                 // (metadata files from an older deploy go even if copied since: another inode, nothing to preserve)
-                if (st.ino == e.ino && st.dev == e.dev) || MacMetadata.inPath(e.rel) {
+                if Deployer.sameFile(st, e, volume: volume) || MacMetadata.inPath(e.rel) {
                     try self.tick()
                     guard unlink(path) == 0 else { throw DeployError.io("remove \(path): \(String(cString: strerror(errno)))") }
                     out[i] = 1
@@ -606,12 +632,13 @@ public final class Deployer {
         // (manifests from before MacMetadata can list "._" files: nothing to protect, they go at the next deploy)
         let list = m.entries.filter { (include?($0.key) ?? true) && !MacMetadata.inPath($0.key) }.map(\.value)
         var state = [UInt8](repeating: 0, count: list.count)   // 0 ok, 1 missing, 2 changed (lstat in parallel)
-        let game = layout.gameDir.path
+        let game = layout.gameDir.path, volume = volumeDevice(game)
         state.withUnsafeMutableBufferPointer { out in
             try? parallel(list.count) { i in
                 let e = list[i]
                 guard let st = lstatPath(game + "/" + e.rel) else { out[i] = 1; return }
-                if st.ino != e.ino || st.dev != e.dev || st.size != e.size || st.mtimeNs != e.mtimeNs { out[i] = 2 }
+                // the same inode must also keep size and exact date (rewritten in place); a copy matched on both already
+                if !Deployer.sameFile(st, e, volume: volume) || (st.ino == e.ino && (st.size != e.size || st.mtimeNs != e.mtimeNs)) { out[i] = 2 }
             }
         }
         var r = VerifyReport()

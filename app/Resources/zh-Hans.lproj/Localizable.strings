@@ -1192,3 +1192,5 @@
 "Improved menus and the mod configuration menu (MCM)." = "改进的菜单和模组配置菜单（MCM）。";
 "Needs SKSE." = "需要 SKSE。";
 "Choose the All in One file on Nexus." = "请在 Nexus 上选择 All in One 文件。";
+"macOS blocked the drive. In Privacy & Security → Files & Folders, allow SkyrimMT Session." = "macOS 阻止了访问此磁盘。请在“隐私与安全性 → 文件与文件夹”中允许 SkyrimMT Session。";
+"Waiting for the drive. If macOS asks whether SkyrimMT Session may use it, click Allow." = "正在等待磁盘。如果 macOS 询问是否允许 SkyrimMT Session 使用它，请点击“允许”。";

@@ -3,6 +3,7 @@
 // scripts/wabbajack-wine.sh) into $SKYRIM_HOME/wabbajack/lists/<list>, then imports that MO2 instance as a SkyrimMT
 // profile (MO2Import.swift). The player's Nexus key is passed to the engine in its environment only.
 import Foundation
+import Darwin
 
 public struct WabbajackListInfo {
     public var name = ""
@@ -105,7 +106,7 @@ extension ModKit {
                 status(line.trimmingCharacters(in: .whitespaces), ModKit.wabbajackFraction(line))
             }
         }
-        try p.run()
+        try ModKit.withOpenFileLimit { try p.run() }
         onStart?(p)
         p.waitUntilExit()
         pipe.fileHandleForReading.readabilityHandler = nil
@@ -115,6 +116,24 @@ extension ModKit {
             throw WabbajackError.failed((lastError ?? "the engine stopped (code \(p.terminationStatus))") + " — log: logs/\(logURL.lastPathComponent)")
         }
         return out
+    }
+
+    /// Run `body` (a process start) with this process's soft open-file limit raised to the most macOS allows one process;
+    /// the started process keeps that limit, this one gets its own back. macOS starts apps with a soft limit of 256, and
+    /// Wabbajack's BSA builder keeps every file of the archive it builds open until the archive is written
+    /// (StandardInstaller.BuildBSAs: thousands for a meshes archive) — "Too many open files" (GitHub issue #22). Windows
+    /// has no such limit, and Linux shells usually raise it.
+    static func withOpenFileLimit<T>(_ body: () throws -> T) rethrows -> T {
+        var old = rlimit()
+        guard getrlimit(RLIMIT_NOFILE, &old) == 0 else { return try body() }
+        var perProc: Int32 = 0, size = MemoryLayout<Int32>.size
+        let cap = sysctlbyname("kern.maxfilesperproc", &perProc, &size, nil, 0) == 0 && perProc > 0 ? rlim_t(perProc) : rlim_t(10240)
+        let want = min(old.rlim_max, cap)
+        guard want > old.rlim_cur else { return try body() }
+        var raised = old; raised.rlim_cur = want
+        guard setrlimit(RLIMIT_NOFILE, &raised) == 0 else { return try body() }
+        defer { setrlimit(RLIMIT_NOFILE, &old) }
+        return try body()
     }
 
     /// "Installing files 120/4000 (…)" / "… 45%" → fraction for a progress bar.

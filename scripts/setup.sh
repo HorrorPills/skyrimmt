@@ -84,7 +84,8 @@ else
   [ -x "$WINE" ] && ok "$how ($("$WINE" --version))" || fail "runtime installed but $WINE missing"
 fi
 
-step "Metal renderer (DXMT ${DXMT_VERSION:-from the runtime})"   # before the prefix: wineboot then copies it in
+dxmt_want=$("$SKYRIMMT_ROOT/scripts/dxmt.sh" wanted)   # the pinned build, or the runtime's own on macOS it can't run on
+step "Metal renderer (DXMT $([ "$dxmt_want" = runtime ] && echo "from the runtime" || echo "$dxmt_want"))"   # before the prefix: wineboot then copies it in
 case $("$SKYRIMMT_ROOT/scripts/dxmt.sh" status) in
   up-to-date) skip "installed" ;;
   outdated*)

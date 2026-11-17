@@ -110,16 +110,25 @@ extension ModKit {
         p.executableURL = pandoraBinary
         p.currentDirectoryURL = pandoraBinary.deletingLastPathComponent()
         p.arguments = ["--tesv", gameDir.path, "-o", out.path] + (interactive ? [] : ["--auto_run", "--auto_close"])
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { try deploy(profile); throw PandoraError.failed("couldn't start (\(error.localizedDescription))") }
+        // Pandora's console output: the only trace when it stops before writing its own log (a crash at start, #28)
+        let logs = home.appendingPathComponent("logs"); try? fm.createDirectory(at: logs, withIntermediateDirectories: true)
+        let consoleLog = logs.appendingPathComponent("pandora-console.log")
+        fm.createFile(atPath: consoleLog.path, contents: nil)
+        let console = try? FileHandle(forWritingTo: consoleLog)
+        p.standardOutput = console ?? FileHandle.nullDevice; p.standardError = console ?? FileHandle.nullDevice
+        do { try p.run() } catch { try? console?.close(); try deploy(profile); throw PandoraError.failed("couldn't start (\(error.localizedDescription))") }
         p.waitUntilExit()
+        try? console?.close()
         result.seconds = Date().timeIntervalSince(t0)
 
         // keep Pandora's log for diagnostics; its run bookkeeping holds paths of the temporary folder
         let log = out.appendingPathComponent("Engine.log")
-        let logs = home.appendingPathComponent("logs"); try? fm.createDirectory(at: logs, withIntermediateDirectories: true)
         let keptLog = logs.appendingPathComponent("pandora-engine.log")
         try? fm.removeItem(at: keptLog); try? fm.moveItem(at: log, to: keptLog)
+        if p.terminationReason == .uncaughtSignal {   // crashed: also when its own window was open
+            try? fm.removeItem(at: out); try deploy(profile)
+            throw PandoraError.failed("it crashed (signal \(p.terminationStatus)) — see logs/\(fm.fileExists(atPath: keptLog.path) ? keptLog.lastPathComponent : consoleLog.lastPathComponent)")
+        }
         try? fm.removeItem(at: out.appendingPathComponent("Pandora_Engine/PreviousOutput.txt"))
         if let text = try? String(contentsOf: keptLog, encoding: .utf8) {
             for line in text.split(separator: "\n") {
@@ -133,7 +142,7 @@ extension ModKit {
         }
         guard p.terminationStatus == 0, fm.fileExists(atPath: behaviours.path) else {
             try? fm.removeItem(at: out); try deploy(profile)
-            throw PandoraError.failed("it stopped with code \(p.terminationStatus)\(result.errors.first.map { ": \($0)" } ?? "") — see logs/pandora-engine.log")
+            throw PandoraError.failed("it stopped with code \(p.terminationStatus)\(result.errors.first.map { ": \($0)" } ?? "") — see logs/\(fm.fileExists(atPath: keptLog.path) ? keptLog.lastPathComponent : consoleLog.lastPathComponent)")
         }
         result.files = (fm.enumerator(at: out, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }.count

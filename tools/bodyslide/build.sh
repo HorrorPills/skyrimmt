@@ -18,7 +18,7 @@ for t in cmake ninja dylibbundler; do command -v $t >/dev/null || { echo "$t mis
 [ -d "$(brew --prefix)/include/directx" ] || { echo "directx-headers missing (brew install directx-headers)"; exit 1; }
 [ -d "$SRC/.git" ] || git clone -q --recurse-submodules "$REPO" "$SRC"
 cd "$SRC"
-if ! git diff --quiet && ! cmp -s <(git diff) "$PATCH"; then
+if ! git diff --quiet && ! cmp -s <(git diff | grep -v '^index ') <(grep -v '^index ' "$PATCH"); then   # index lines: abbreviation length varies
   echo "$SRC has local changes that differ from macos.patch — update the patch (git diff > macos.patch) or clean it"; exit 1
 fi
 want=$(git rev-parse -q --verify "$TAG^{commit}" || { git fetch -q --tags origin; git rev-parse "$TAG^{commit}"; })

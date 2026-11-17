@@ -1,7 +1,8 @@
 #!/bin/bash
 # Native macOS (arm64) build of Pandora Behaviour Engine+ (GPL-3.0, github.com/Monitor221hz/Pandora-Behaviour-Engine-Plus)
 # at a pinned commit plus tools/pandora/macos.patch. Output: $SKYRIM_HOME/tools/pandora (what the mod manager runs).
-# Needs the .NET 10 SDK (brew install dotnet). Developer tool: end users get the prebuilt folder.
+# Needs Microsoft's .NET 10 SDK (dot.net/v1/dotnet-install.sh; not Homebrew's: tools/check-dotnet-runtime.sh).
+# Developer tool: end users get the prebuilt folder.
 #   tools/pandora/build.sh [--src <checkout>]
 . "$(dirname "$0")/../../scripts/_env.sh"   # before strict mode: _env.sh tolerates missing optional files
 set -euo pipefail
@@ -12,12 +13,15 @@ PATCH="$SKYRIMMT_ROOT/tools/pandora/macos.patch"
 SRC="$SKYRIM_HOME/cache/pandora-src"; [ "${1:-}" = --src ] && SRC=$2
 OUT="${SKYRIMMT_TOOL_OUT:-$SKYRIM_HOME/tools/pandora}"   # release builds: a staging folder
 
-command -v dotnet >/dev/null || { echo "dotnet SDK missing (brew install dotnet)"; exit 1; }
+# DOTNET=<path to dotnet> picks the SDK (default: dotnet on PATH, else ~/.dotnet/dotnet as dotnet-install.sh puts it)
+DOTNET=${DOTNET:-$(command -v dotnet || echo "$HOME/.dotnet/dotnet")}
+[ -x "$DOTNET" ] || { echo "dotnet SDK missing (Microsoft's: curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0)"; exit 1; }
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false
 if [ ! -d "$SRC/.git" ]; then
   git clone -q --recurse-submodules "$REPO" "$SRC"
 fi
 cd "$SRC"
-if ! git diff --quiet && ! cmp -s <(git diff) "$PATCH"; then
+if ! git diff --quiet && ! cmp -s <(git diff | grep -v '^index ') <(grep -v '^index ' "$PATCH"); then   # index lines: abbreviation length varies
   echo "$SRC has local changes that differ from macos.patch — update the patch (git diff > macos.patch) or clean it"; exit 1
 fi
 if [ "$(git rev-parse HEAD)" != "$COMMIT" ]; then
@@ -26,9 +30,10 @@ if [ "$(git rev-parse HEAD)" != "$COMMIT" ]; then
 fi
 git diff --quiet && git apply "$PATCH"
 tmp="$OUT.new"; rm -rf "$tmp"
-dotnet publish Pandora.Engine/Pandora.Engine.csproj -c Release -r osx-arm64 --self-contained true -p:PathMap="$SRC=/src" -p:DebugType=none -o "$tmp" -v q -nologo |
+"$DOTNET" publish Pandora.Engine/Pandora.Engine.csproj -c Release -r osx-arm64 --self-contained true -p:PathMap="$SRC=/src" -p:DebugType=none -o "$tmp" -v q -nologo |
   grep -E ' error ' || true
 [ -x "$tmp/Pandora Behaviour Engine+" ] || { echo "build failed"; exit 1; }
+"$SKYRIMMT_ROOT/tools/check-dotnet-runtime.sh" "$tmp" || exit 1   # runs on macOS 15 (issue #28)
 rm -f "$tmp"/*.pdb "$tmp/Settings.json"
 printf '%s %s\n' "$COMMIT" "$(cat "$PATCH" "$SELF" | shasum -a 256 | cut -c1-16)" > "$tmp/.skyrimmt-pandora"   # build id: source, patch, build settings
 rm -rf "$OUT"; mv "$tmp" "$OUT"

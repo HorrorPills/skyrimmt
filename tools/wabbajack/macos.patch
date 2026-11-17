@@ -1,5 +1,5 @@
 diff --git a/Wabbajack.Common/JackifyConfig.cs b/Wabbajack.Common/JackifyConfig.cs
-index 3577453..d53cf2c 100644
+index 3577453f..d53cf2c9 100644
 --- a/Wabbajack.Common/JackifyConfig.cs
 +++ b/Wabbajack.Common/JackifyConfig.cs
 @@ -35,6 +35,10 @@ public static class JackifyConfig
@@ -14,7 +14,7 @@ index 3577453..d53cf2c 100644
          {
              var home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 diff --git a/Wabbajack.Common/ProtonDetector.cs b/Wabbajack.Common/ProtonDetector.cs
-index 8e5e065..bab2f21 100755
+index 8e5e0658..bab2f21f 100755
 --- a/Wabbajack.Common/ProtonDetector.cs
 +++ b/Wabbajack.Common/ProtonDetector.cs
 @@ -67,6 +67,13 @@ public class ProtonDetector
@@ -32,7 +32,7 @@ index 8e5e065..bab2f21 100755
          {
              _logger.LogDebug("Running on Windows, no Proton needed");
 diff --git a/Wabbajack.Downloaders.GameFile/GameLocator.cs b/Wabbajack.Downloaders.GameFile/GameLocator.cs
-index dddd96c..689eeb8 100644
+index dddd96cb..689eeb84 100644
 --- a/Wabbajack.Downloaders.GameFile/GameLocator.cs
 +++ b/Wabbajack.Downloaders.GameFile/GameLocator.cs
 @@ -191,6 +191,14 @@ public class GameLocator : IGameLocator
@@ -51,7 +51,7 @@ index dddd96c..689eeb8 100644
          {
              if (!_steamGames.TryGetValue(AppId.From((uint)id), out var found)) continue;
 diff --git a/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs b/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs
-index b0f73e7..7486289 100644
+index b0f73e72..74862898 100644
 --- a/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs
 +++ b/Wabbajack.Downloaders.VerificationCache/VerificationCache.cs
 @@ -1,4 +1,6 @@
@@ -129,7 +129,7 @@ index b0f73e7..7486289 100644
              cmd.Parameters.AddWithValue("@pks", state.PrimaryKeyString);
              await cmd.PrepareAsync();
 diff --git a/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj b/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj
-index bac607b..f8e81ec 100644
+index bac607ba..f8e81ecf 100644
 --- a/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj
 +++ b/Wabbajack.Downloaders.VerificationCache/Wabbajack.Downloaders.VerificationCache.csproj
 @@ -15,7 +15,7 @@
@@ -142,7 +142,7 @@ index bac607b..f8e81ec 100644
  
  </Project>
 diff --git a/Wabbajack.Installer/AInstaller.cs b/Wabbajack.Installer/AInstaller.cs
-index 02b0763..33c0f7b 100644
+index 02b07631..33c0f7b7 100644
 --- a/Wabbajack.Installer/AInstaller.cs
 +++ b/Wabbajack.Installer/AInstaller.cs
 @@ -825,7 +825,8 @@ public abstract class AInstaller<T>
@@ -155,8 +155,36 @@ index 02b0763..33c0f7b 100644
          {
              _logger.LogInformation("Nexus account is non-premium — routing all Nexus archives to manual download protocol");
              var nexusArchives = nonManualArchives.Where(a => a.State is DTOs.DownloadStates.Nexus).ToList();
+diff --git a/Wabbajack.Installer/StandardInstaller.cs b/Wabbajack.Installer/StandardInstaller.cs
+index 8afa52a4..a6fdf86f 100644
+--- a/Wabbajack.Installer/StandardInstaller.cs
++++ b/Wabbajack.Installer/StandardInstaller.cs
+@@ -168,6 +168,23 @@ public class StandardInstaller : AInstaller<StandardInstaller>
+         // retried above - a genuinely missing/wrong game file can't be fixed by re-downloading it.
+         var missingGameFiles = missing.Where(a => a.State is GameFileSource).ToList();
+ 
++        // SkyrimMT: a log file the modlist author's game folder happened to have (Gate to Sovngarde's Debug.log, issue
++        // #29) isn't part of the game, and nobody else has it: install without it instead of stopping. Only files
++        // copied as they are (not into a BSA, not patched).
++        var strayLogs = missingGameFiles.Where(a =>
++            a.Name.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&
++            ModList.Directives.OfType<FromArchive>().Where(d => d.ArchiveHashPath.Hash == a.Hash)
++                .All(d => d.GetType() == typeof(FromArchive) && !d.To.StartsWith($"{Consts.BSACreationDir}"))).ToList();
++        if (strayLogs.Count > 0)
++        {
++            var skip = strayLogs.Select(a => a.Hash).ToHashSet();
++            foreach (var a in strayLogs)
++                _logger.LogWarning("Game file {name} is missing: it's a log file from the modlist author's game folder, not part of the game - installing without it", a.Name);
++            ModList.Directives = ModList.Directives.Where(d => !(d is FromArchive f && skip.Contains(f.ArchiveHashPath.Hash))).ToArray();
++            ModList.Archives = ModList.Archives.Where(a => !skip.Contains(a.Hash)).ToArray();
++            missingGameFiles = missingGameFiles.Where(a => !skip.Contains(a.Hash)).ToList();
++        }
++
+         if (nonManualMissing.Count > 0 || missingGameFiles.Count > 0)
+         {
+             foreach (var a in nonManualMissing)
 diff --git a/Wabbajack.VFS/FileHashCache.cs b/Wabbajack.VFS/FileHashCache.cs
-index 9f685f7..48e1cc0 100644
+index 9f685f75..48e1cc09 100644
 --- a/Wabbajack.VFS/FileHashCache.cs
 +++ b/Wabbajack.VFS/FileHashCache.cs
 @@ -1,4 +1,4 @@
@@ -241,7 +269,7 @@ index 9f685f7..48e1cc0 100644
          cmd.PrepareAsync();
  
 diff --git a/Wabbajack.VFS/VFSCache.cs b/Wabbajack.VFS/VFSCache.cs
-index 421a1ff..504d044 100644
+index 421a1ffd..504d0443 100644
 --- a/Wabbajack.VFS/VFSCache.cs
 +++ b/Wabbajack.VFS/VFSCache.cs
 @@ -1,7 +1,7 @@
@@ -342,7 +370,7 @@ index 421a1ff..504d044 100644
          cmd.PrepareAsync();
  
 diff --git a/Wabbajack.VFS/Wabbajack.VFS.csproj b/Wabbajack.VFS/Wabbajack.VFS.csproj
-index 7020581..e1531c8 100644
+index 70205812..e1531c80 100644
 --- a/Wabbajack.VFS/Wabbajack.VFS.csproj
 +++ b/Wabbajack.VFS/Wabbajack.VFS.csproj
 @@ -17,7 +17,7 @@
@@ -355,7 +383,7 @@ index 7020581..e1531c8 100644
  
      <ItemGroup>
 diff --git a/global.json b/global.json
-index 22e1b9b..b8d16ca 100644
+index 22e1b9b2..b8d16caf 100644
 --- a/global.json
 +++ b/global.json
 @@ -1,5 +1,6 @@
@@ -369,7 +397,7 @@ index 22e1b9b..b8d16ca 100644
 \ No newline at end of file
 +}
 diff --git a/jackify-engine/Verbs/DownloadModlist.cs b/jackify-engine/Verbs/DownloadModlist.cs
-index 22656e2..ed48239 100644
+index 22656e2e..ed48239e 100644
 --- a/jackify-engine/Verbs/DownloadModlist.cs
 +++ b/jackify-engine/Verbs/DownloadModlist.cs
 @@ -87,13 +87,14 @@ public class DownloadWabbajackFile
@@ -428,7 +456,7 @@ index 22656e2..ed48239 100644
          }
          finally
 diff --git a/jackify-engine/Verbs/Install.cs b/jackify-engine/Verbs/Install.cs
-index 9f05c3d..ebe9c9b 100644
+index 9f05c3d4..ebe9c9b7 100644
 --- a/jackify-engine/Verbs/Install.cs
 +++ b/jackify-engine/Verbs/Install.cs
 @@ -154,7 +154,7 @@ public class Install

@@ -271,6 +271,51 @@ func collectionSharedProfileTests() {
     check(k.profile(own)?.mods.contains { $0.id == trID } == true, "its old profile is left as it was")
 }
 
+/// Vortex's updatePolicy "latest": the collection pins a file, but the author's later update of it is installed.
+func collectionLatestPolicyTests() {
+    section("collection mods with updatePolicy latest")
+    let f = Fixture("collatest")
+    let k = f.kit
+    let src = freshDir("collatest-src")
+    try! fm.createDirectory(at: k.downloadsDir, withIntermediateDirectories: true)
+    func archive(_ name: String, _ mid: Int, _ fid: Int, _ md5: String, _ content: String) {
+        write(src.appendingPathComponent("\(name)-\(fid)/\(name).esp"), content)
+        pack(src.appendingPathComponent("\(name)-\(fid)"), k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip"), format: "zip")
+        write(k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip.meta.json"),
+              #"{"modID":\#(mid),"fileID":\#(fid),"modName":"\#(name)","fileName":"\#(name)","version":"\#(fid)","md5":"\#(md5)","downloadedAt":"2026-10-18T10:00:00Z"}"#)
+    }
+    archive("Obj", 9, 90, "o1", "objets 1.0.1"); archive("Obj", 9, 91, "o3", "objets 1.0.3")
+    archive("Pin", 8, 80, "p1", "pin 1"); archive("Pin", 8, 81, "p2", "pin 2")
+    let man = try! CollectionManifest.parse(Data(#"""
+        {"info":{"name":"Latest Col"},"mods":[
+          {"name":"Obj","optional":false,"phase":0,"source":{"type":"nexus","modId":9,"fileId":90,"md5":"o1","updatePolicy":"latest"}},
+          {"name":"Pin","optional":false,"phase":0,"source":{"type":"nexus","modId":8,"fileId":80,"md5":"p1","updatePolicy":"exact"}}],
+         "modRules":[],"loadOrder":[{"name":"Obj.esp","enabled":true},{"name":"Pin.esp","enabled":true}]}
+        """#.utf8))
+    check(man.mods.map(\.updatePolicy) == ["latest", "exact"], "update policies read from collection.json")
+    func files(_ mid: Int, _ a: Int, _ b: Int, _ md5: String) -> Data {
+        json(["files": [["file_id": a, "name": "F", "file_name": "F-\(a).zip", "version": "1.0.1"],
+                        ["file_id": b, "name": "F", "file_name": "F-\(b).zip", "version": "1.0.3", "md5": md5]],
+              "file_updates": [["old_file_id": a, "new_file_id": b]]])
+    }
+    StubProtocol.handler = { r in
+        if r.url!.path.hasSuffix("mods/9/files.json") { return (200, [:], files(9, 90, 91, "o3")) }
+        if r.url!.path.hasSuffix("mods/8/files.json") { return (200, [:], files(8, 80, 81, "p2")) }
+        return (404, [:], Data())
+    }
+    defer { StubProtocol.handler = nil }
+    let client = NexusClient(apiKey: "k", appVersion: "t", baseURL: URL(string: "https://api.test/v1/")!, session: stubSession())
+    let info = CollectionInfo(slug: "latcol", name: "Latest Col", revision: 1, downloadLink: "", gameVersions: [], totalSize: 0,
+                              files: [CollectionFile(modID: 9, fileID: 90, modName: "Obj", fileName: "Obj", version: "1.0.1", size: 0, optional: false),
+                                      CollectionFile(modID: 8, fileID: 80, modName: "Pin", fileName: "Pin", version: "1", size: 0, optional: false)])
+    let prof = runAsync { try await k.installCollection(info: info, manifest: man, items: man.mods, client: client, gameVersion: "1.6.1170", progress: { _, _ in }) }
+    check(read(f.game.appendingPathComponent("Data/Obj.esp")) == "objets 1.0.3", "\"latest\": the author's newest file is installed")
+    check(read(f.game.appendingPathComponent("Data/Pin.esp")) == "pin 1", "\"exact\": the pinned file stays")
+    let obj = k.mods.first { $0.nexus?.modID == 9 }
+    check(obj?.nexus?.fileID == 91 && obj?.version == "1.0.3", "the record names the file installed (\(String(describing: obj?.version)))")
+    check(k.profile(prof)?.mods.count == 2 && k.profile(prof)?.loadOrder.map(\.name) == ["Obj.esp", "Pin.esp"], "order and plugins as the collection says")
+}
+
 func versionKeyTests() {
     section("profile game version → version key")
     check(ModKit.versionKey("1.7.104", steamVersion: "1.7.104", installed: ["1.6.1170"]) == "steam", "list made for Steam's current version runs on Steam")

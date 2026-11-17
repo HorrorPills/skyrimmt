@@ -55,6 +55,7 @@ public struct CollectionMod: Equatable {
     public var url: String?
     public var instructions: String?
     public var choices: [String: Any]?
+    public var updatePolicy: String? = nil   // Vortex: "exact" (default) | "prefer" | "latest" (the file's newest update)
     public static func == (a: CollectionMod, b: CollectionMod) -> Bool { a.name == b.name && a.modID == b.modID && a.fileID == b.fileID && a.sourceType == b.sourceType }
 }
 
@@ -83,7 +84,8 @@ public struct CollectionManifest {
             m.mods.append(CollectionMod(name: e["name"] as? String ?? "", optional: e["optional"] as? Bool ?? false, phase: int(e["phase"]) ?? 0,
                                         sourceType: (src["type"] as? String ?? "nexus").lowercased(), modID: int(src["modId"]), fileID: int(src["fileId"]),
                                         md5: src["md5"] as? String, logicalFilename: src["logicalFilename"] as? String, url: src["url"] as? String,
-                                        instructions: (src["instructions"] as? String) ?? (e["instructions"] as? String), choices: e["choices"] as? [String: Any]))
+                                        instructions: (src["instructions"] as? String) ?? (e["instructions"] as? String), choices: e["choices"] as? [String: Any],
+                                        updatePolicy: src["updatePolicy"] as? String))
         }
         for r in j["modRules"] as? [[String: Any]] ?? [] {
             m.rules.append(CollectionRule(type: (r["type"] as? String ?? "").lowercased(), source: strings(r["source"]), reference: strings(r["reference"])))
@@ -277,6 +279,19 @@ extension ModKit {
                                   gameVersion: String, into: String? = nil,
                                   progress: @escaping (Int, CollectionItemState) -> Void,
                                   nxmFor: ((CollectionMod) async -> NxmLink?)? = nil) async throws -> String {
+        // Vortex's updatePolicy "latest": the newest file in the pinned file's update chain (fixes the author published
+        // after the revision). Ordering below still uses the pinned items (rules can name a file's MD5).
+        let pinned = items
+        var items = items, info = info
+        for i in items.indices where items[i].updatePolicy == "latest" && items[i].sourceType == "nexus" {
+            guard let mid = items[i].modID, let fid = items[i].fileID, let r = try? await client.filesWithUpdates(mid),
+                  let new = ModKit.latestFile(from: fid, files: r.files, updates: r.updates) else { continue }
+            let old = info.files.first { $0.modID == mid && $0.fileID == fid }
+            items[i].fileID = new.fileID; items[i].md5 = new.md5
+            info = CollectionInfo(slug: info.slug, name: info.name, revision: info.revision, downloadLink: info.downloadLink, gameVersions: info.gameVersions,
+                                  totalSize: info.totalSize, files: info.files + [CollectionFile(modID: mid, fileID: new.fileID, modName: old?.modName ?? items[i].name,
+                                  fileName: new.fileName, version: new.version, size: new.sizeBytes ?? 0, optional: old?.optional ?? items[i].optional)])
+        }
         let earlierInstall = installedCollections().first { $0.slug == info.slug }
         if let into, profile(into) == nil { throw ModKitError.invalid("profile “\(into)” doesn't exist") }
         // an update goes into the profile the collection already has (even if the author renamed it), unless `into` moves
@@ -429,13 +444,13 @@ extension ModKit {
             do { try install(i, items[i], archive: archive, allowDefer: false) } catch { progress(i, .failed("\(error)")); failedNames.append(items[i].name) }
         }
         // priority: phases + the author's rules; then the author's plugin order; deploy
-        let order = manifest.ordered(items)
+        let order = manifest.ordered(pinned)
         p = try currentProfile()
         // the profile's other mods keep their order and place; the collection's block goes where it was (an update) or
         // after them (new to the profile: it wins conflicts). A mod they already use stays where it is.
         let kept = extras.filter { mod($0.id) != nil }.map { e -> ProfileMod in var k = e; if duplicatesCollection(e.id) { k.enabled = false }; return k }
         let keptIDs = Set(kept.map(\.id))
-        let block = order.compactMap { item in items.firstIndex(of: item).flatMap { ids[$0] } }.reduce(into: [ProfileMod]()) { r, id in
+        let block = order.compactMap { item in pinned.firstIndex(of: item).flatMap { ids[$0] } }.reduce(into: [ProfileMod]()) { r, id in
             if !keptIDs.contains(id), !r.contains(where: { $0.id == id }) { r.append(ProfileMod(id: id, enabled: true)) }
         }
         let modsAt = newHere ? kept.count

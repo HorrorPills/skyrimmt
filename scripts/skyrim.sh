@@ -100,6 +100,8 @@ if [ -f "$prefs" ] && [ "$wsize" != keep ]; then
   fi
 fi
 
+sync_game_language >> "$LOG" 2>&1   # Steam's language setting → Skyrim.ini (issue #27; see _env.sh)
+
 # Creations catalog (AppData/Local/.../ContentCatalog.txt) per game version: 1.7.x writes a newer format that older
 # builds can't read ("invalid stoull argument" at start-up, found 2026-10-19 with a 1.6.1170 profile). The file of
 # the version that wrote it is kept as ContentCatalog.<version>.txt and put back when that version runs again.

@@ -1196,3 +1196,9 @@
 "For setups that bring their own downgrade (some collections). If the game really doesn't match, SKSE shows an error and stops." = "适用于自带降级方案的配置（部分合集）。如果游戏版本确实不匹配，SKSE 会显示错误并停止。";
 "macOS blocked the drive. In Privacy & Security → Files & Folders, allow SkyrimMT Session." = "macOS 阻止了访问此磁盘。请在“隐私与安全性 → 文件与文件夹”中允许 SkyrimMT Session。";
 "Waiting for the drive. If macOS asks whether SkyrimMT Session may use it, click Allow." = "正在等待磁盘。如果 macOS 询问是否允许 SkyrimMT Session 使用它，请点击“允许”。";
+"Where should “%@” go?" = "要将“%@”安装到哪里？";
+"In a profile of its own, or on top of the mods of “%@” (for add-ons such as translations or texture packs: its mods then win conflicts)." = "安装到单独的配置文件，或叠加在“%@”的模组之上（适用于翻译、材质包等附加合集：冲突时以它的模组为准）。";
+"New Profile" = "新建配置文件";
+"Add to “%@”" = "添加到“%@”";
+"Removes its mods and plugins from “%@” (the mods only it uses are deleted). The profile and its other collections stay." = "从“%@”中移除它的模组和插件（仅它使用的模组会被删除）。配置文件及其中的其他合集保留不变。";
+"Installs it on top of this profile's mods, reusing the mods it already has (nothing to download). Its own profile stays until you delete it." = "将它叠加安装到此配置文件的模组之上，并复用已安装的模组（无需下载）。它原来的配置文件会保留，直到你删除它。";

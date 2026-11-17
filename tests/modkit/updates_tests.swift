@@ -200,6 +200,77 @@ func collectionUpdateTests() {
     check(read(f.game.appendingPathComponent("Data/Patch.esp")) == "Patch-21", "new file version deployed")
 }
 
+/// Several collections in one profile: an add-on (a translation shipping its own copy of the base's plugin) goes on top,
+/// and updating, restoring or removing either one leaves the other's part alone.
+func collectionSharedProfileTests() {
+    section("collections sharing a profile")
+    let f = Fixture("colshared")
+    let k = f.kit
+    let src = freshDir("colshared-src")
+    try! fm.createDirectory(at: k.downloadsDir, withIntermediateDirectories: true)
+    func archive(_ name: String, _ mid: Int, _ fid: Int, _ md5: String, _ files: [String: String]) {
+        for (rel, c) in files { write(src.appendingPathComponent("\(name)-\(fid)/\(rel)"), c) }
+        pack(src.appendingPathComponent("\(name)-\(fid)"), k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip"), format: "zip")
+        write(k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip.meta.json"),
+              #"{"modID":\#(mid),"fileID":\#(fid),"modName":"\#(name)","fileName":"\#(name)","version":"\#(fid)","md5":"\#(md5)","downloadedAt":"2026-10-18T10:00:00Z"}"#)
+    }
+    archive("Base", 1, 10, "aa", ["Base.esp": "base"]); archive("Patch", 2, 20, "bb", ["Patch.esp": "patch"])
+    archive("Patch", 2, 21, "b2", ["Patch.esp": "patch 2"])
+    archive("Tr", 6, 60, "ff", ["Base.esp": "base, translated", "TrNew.esp": "tr"])
+    typealias M = (String, Int, Int, String)
+    func col(_ slug: String, _ name: String, _ rev: Int, _ mods: [M], _ lo: [String]) -> (CollectionInfo, CollectionManifest) {
+        let m = mods.map { #"{"name":"\#($0.0)","optional":false,"phase":0,"source":{"type":"nexus","modId":\#($0.1),"fileId":\#($0.2),"md5":"\#($0.3)"}}"# }
+        let l = lo.map { #"{"name":"\#($0)","enabled":true}"# }
+        let man = try! CollectionManifest.parse(Data(#"{"info":{"name":"\#(name)"},"mods":[\#(m.joined(separator: ","))],"modRules":[],"loadOrder":[\#(l.joined(separator: ","))]}"#.utf8))
+        return (CollectionInfo(slug: slug, name: name, revision: rev, downloadLink: "", gameVersions: [], totalSize: 0,
+                               files: mods.map { CollectionFile(modID: $0.1, fileID: $0.2, modName: $0.0, fileName: $0.0, version: "\($0.2)", size: 0, optional: false) }), man)
+    }
+    let client = NexusClient(apiKey: "k", appVersion: "t", baseURL: URL(string: "https://api.test/v1/")!, session: stubSession())
+    func install(_ c: (CollectionInfo, CollectionManifest), into: String? = nil) -> String {
+        runAsync { try await k.installCollection(info: c.0, manifest: c.1, items: c.1.mods, client: client, gameVersion: "1.6.1170", into: into, progress: { _, _ in }) }
+    }
+    func modNames(_ p: String) -> [String] { k.profile(p)!.mods.compactMap { k.mod($0.id)?.name } }
+    func plugins(_ p: String) -> [String] { k.profile(p)!.loadOrder.map(\.name) }
+    let base1 = col("basecl", "Base Col", 1, [("Base", 1, 10, "aa"), ("Patch", 2, 20, "bb")], ["Base.esp", "Patch.esp"])
+    let prof = install(base1)
+    _ = f.addMod("Mine", ["Mine.esp": "mine"])
+    var p = try! k.currentProfile(); p.loadOrder.append(LoadOrderEntry(name: "Mine.esp", active: true)); try! k.saveProfile(p)
+    let addon = col("addonc", "Addon", 1, [("Tr", 6, 60, "ff")], ["Base.esp", "Patch.esp", "TrNew.esp"])
+    let profiles = k.profileNames()
+    check(install(addon, into: prof) == prof && k.profileNames() == profiles, "the add-on goes into the existing profile, no new one (\(k.profileNames()))")
+    check(modNames(prof) == ["Base", "Patch", "Mine", "Tr"], "its mods come after the profile's (\(modNames(prof)))")
+    check(plugins(prof) == ["Base.esp", "Patch.esp", "Mine.esp", "TrNew.esp"], "its plugins merged in, the shared one in its place (\(plugins(prof)))")
+    check(read(f.game.appendingPathComponent("Data/Base.esp")) == "base, translated", "the add-on wins the conflict")
+    check(k.installedCollections().map(\.profile) == [prof, prof], "both collections recorded in the profile")
+
+    let base2 = col("basecl", "Base Col", 2, [("Base", 1, 10, "aa"), ("Patch", 2, 21, "b2")], ["Base.esp", "Patch.esp"])
+    _ = install(base2)
+    check(modNames(prof) == ["Base", "Patch", "Mine", "Tr"] && read(f.game.appendingPathComponent("Data/Patch.esp")) == "patch 2",
+          "updating the base keeps the add-on on top (\(modNames(prof)))")
+    check(plugins(prof) == ["Base.esp", "Patch.esp", "Mine.esp", "TrNew.esp"], "and the add-on's plugins (\(plugins(prof)))")
+    check(k.profile(prof)?.gameVersion == "1.6.1170" || k.profile(prof)?.gameVersion == nil, "the profile keeps its game version")
+
+    var q = k.profile(prof)!; q.loadOrder.swapAt(0, 1); q.loadOrder.removeAll { $0.name == "TrNew.esp" }; try! k.saveProfile(q)
+    try! k.applyCollectionLoadOrder(slug: "addonc", manifest: addon.1)
+    check(plugins(prof) == ["Patch.esp", "Base.esp", "Mine.esp", "TrNew.esp"], "restoring the add-on's order only touches its own plugins (\(plugins(prof)))")
+
+    try! k.removeCollection(slug: "addonc")
+    check(k.currentProfileName == prof && k.profile(prof) != nil, "removing the add-on keeps the profile")
+    check(modNames(prof) == ["Base", "Patch", "Mine"] && k.mods.allSatisfy { $0.name != "Tr" }, "its mods leave (\(modNames(prof)))")
+    check(plugins(prof) == ["Patch.esp", "Base.esp", "Mine.esp"], "its plugins leave, the base's plugin of the same name stays (\(plugins(prof)))")
+    check(read(f.game.appendingPathComponent("Data/Base.esp")) == "base" && !fm.fileExists(atPath: f.game.appendingPathComponent("Data/TrNew.esp").path),
+          "the game is back to the base")
+    check(k.installedCollections().map(\.slug) == ["basecl"], "the base collection stays recorded")
+
+    // an add-on first installed in a profile of its own, then moved on top of the base: nothing new to install
+    let own = install(addon)
+    let trID = k.mods.first { $0.name == "Tr" }!.id, count = k.mods.count
+    _ = try! k.switchProfile(to: prof)
+    check(install(addon, into: prof) == prof && k.mods.count == count, "moved without installing anything again")
+    check(k.installedCollections().first { $0.slug == "addonc" }?.profile == prof && modNames(prof).last == "Tr", "the add-on now lives on top of the base")
+    check(k.profile(own)?.mods.contains { $0.id == trID } == true, "its old profile is left as it was")
+}
+
 func versionKeyTests() {
     section("profile game version → version key")
     check(ModKit.versionKey("1.7.104", steamVersion: "1.7.104", installed: ["1.6.1170"]) == "steam", "list made for Steam's current version runs on Steam")

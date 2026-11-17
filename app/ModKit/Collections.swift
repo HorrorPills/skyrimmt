@@ -3,6 +3,9 @@
 // website and the nxm link is matched here — Nexus rule), install them with the author's FOMOD choices, order them by
 // phase + mod rules, apply the author's plugin load order, deploy — into a profile of its own, so the player's other
 // setups are untouched. Removing a collection removes its profile and the mods only it used.
+// A collection can also go into an existing profile, on top of what it holds (add-ons such as translations, as Vortex
+// allows): its mods come after the profile's and win conflicts, its plugins are merged into the profile's load order,
+// and updating, restoring or removing it only touches its own part.
 // Facts: GraphQL schema (api.nexusmods.com/v2/graphql introspection), collection.json keys (nexus-collection-dl, MIT,
 // read for facts), docs/m1-sources.md.
 import Foundation
@@ -266,28 +269,29 @@ extension ModKit {
     public func installedCollections() -> [InstalledCollection] { readJSON(collectionsURL, [InstalledCollection].self) ?? [] }
     func saveCollections(_ c: [InstalledCollection]) throws { try writeJSON(c, to: collectionsURL) }
 
-    /// Install a collection into its own profile. `progress(index, state)` reports per mod (index into `items`).
+    /// Install a collection into its own profile, or into the existing profile `into` (the current one: FOMOD
+    /// conditions read the deployed plugins). `progress(index, state)` reports per mod (index into `items`).
     /// Returns the profile name. Premium accounts only for unattended downloads (free accounts: nxmFor lets the caller
     /// wait for the user's own website click for that file).
     public func installCollection(info: CollectionInfo, manifest: CollectionManifest, items: [CollectionMod], client: NexusClient,
-                                  gameVersion: String,
+                                  gameVersion: String, into: String? = nil,
                                   progress: @escaping (Int, CollectionItemState) -> Void,
                                   nxmFor: ((CollectionMod) async -> NxmLink?)? = nil) async throws -> String {
         let earlierInstall = installedCollections().first { $0.slug == info.slug }
-        // an update goes into the profile the collection already has (even if the author renamed it)
-        let profileName = earlierInstall.flatMap { profile($0.profile) != nil ? $0.profile : nil } ?? ModKit.sanitize(info.name.isEmpty ? info.slug : info.name)
+        if let into, profile(into) == nil { throw ModKitError.invalid("profile “\(into)” doesn't exist") }
+        // an update goes into the profile the collection already has (even if the author renamed it), unless `into` moves
+        // it to another one (its installed mods are reused; the old profile stays, the player deletes it if unwanted)
+        let profileName = into ?? earlierInstall.flatMap { profile($0.profile) != nil ? $0.profile : nil } ?? ModKit.sanitize(info.name.isEmpty ? info.slug : info.name)
+        let sharedWith = installedCollections().filter { $0.slug != info.slug && $0.profile == profileName }
         // what the player added to the collection's profile (and generated output) survives an update
         let before = profile(profileName)
-        let collectionMods = Set((earlierInstall?.modIDs ?? []) + (earlierInstall?.reused ?? []))
+        let newHere = earlierInstall?.profile != profileName   // first install, or moved into another profile
+        let collectionMods = newHere ? [] : Set((earlierInstall?.modIDs ?? []) + (earlierInstall?.reused ?? []))
         let extras = (before?.mods ?? []).filter { !collectionMods.contains($0.id) }
         // another file of a mod the collection ships would be a second copy of it: kept, but off (issue #8)
         let collectionNexusMods = Set(items.compactMap(\.modID))
         func duplicatesCollection(_ id: String) -> Bool { mod(id)?.nexus.map { collectionNexusMods.contains($0.modID) } ?? false }
-        var extraPlugins: [LoadOrderEntry] = []
-        for e in extras where !duplicatesCollection(e.id) { if let m = mod(e.id) {
-            let names = Set(((try? FileManager.default.contentsOfDirectory(atPath: stagingFolder(m).path)) ?? []).map { $0.lowercased() })
-            extraPlugins += (before?.loadOrder ?? []).filter { names.contains($0.name.lowercased()) }
-        } }
+        let extraNames = Set(extras.filter { !duplicatesCollection($0.id) }.flatMap { topLevelNames($0.id) })
         // keep the collection's metadata (reinstall / repair / diagnostics)
         if let b = manifest.bundleDir {
             let keep = stateDir.appendingPathComponent("collections/\(info.slug).json")
@@ -301,9 +305,10 @@ extension ModKit {
             // Vortex never runs Pandora/BodySlide for a collection's players: its profile starts the same way
             try setAutoGenerate(profileName, pandora: false, bodySlide: false)
         }
-        // installs go into the collection's profile (no deploy yet)
+        // installs go into the collection's profile (no deploy yet); its mod list is rebuilt at the end, so an install
+        // that stops halfway leaves it as it was
         try atomicWrite(profileName + "\n", to: currentURL)
-        var p = try currentProfile(); p.mods = []; if let v = profile(profileName)?.gameVersion { p.gameVersion = v }; try saveProfile(p)
+        var p = try currentProfile()
         let dl = NexusDownloader(client: client, folder: home.appendingPathComponent("downloads"))
         var ids: [Int: String] = [:]          // item index → ModRecord id
         var installedHere: [String] = [], reusedHere: [String] = []
@@ -426,16 +431,21 @@ extension ModKit {
         // priority: phases + the author's rules; then the author's plugin order; deploy
         let order = manifest.ordered(items)
         p = try currentProfile()
-        p.mods = order.compactMap { item in items.firstIndex(of: item).flatMap { ids[$0] } }.reduce(into: [ProfileMod]()) { r, id in
-            if !r.contains(where: { $0.id == id }) { r.append(ProfileMod(id: id, enabled: true)) }
+        // the profile's other mods keep their order and place; the collection's block goes where it was (an update) or
+        // after them (new to the profile: it wins conflicts). A mod they already use stays where it is.
+        let kept = extras.filter { mod($0.id) != nil }.map { e -> ProfileMod in var k = e; if duplicatesCollection(e.id) { k.enabled = false }; return k }
+        let keptIDs = Set(kept.map(\.id))
+        let block = order.compactMap { item in items.firstIndex(of: item).flatMap { ids[$0] } }.reduce(into: [ProfileMod]()) { r, id in
+            if !keptIDs.contains(id), !r.contains(where: { $0.id == id }) { r.append(ProfileMod(id: id, enabled: true)) }
         }
-        for e in extras where !p.mods.contains(where: { $0.id == e.id }) && mod(e.id) != nil {
-            var kept = e; if duplicatesCollection(e.id) { kept.enabled = false }
-            p.mods.append(kept)
-        }
-        p.loadOrder = manifest.loadOrder
-        for e in extraPlugins where !p.loadOrder.contains(where: { $0.name.lowercased() == e.name.lowercased() }) { p.loadOrder.append(e) }
-        if let v = detectedVersion { p.gameVersion = v }   // the profile remembers its Skyrim version (profile switches)
+        let modsAt = newHere ? kept.count
+            : (before?.mods.firstIndex { collectionMods.contains($0.id) }).map { i in kept.filter { k in before!.mods[..<i].contains { $0.id == k.id } }.count } ?? kept.count
+        p.mods = Array(kept[..<modsAt]) + block + Array(kept[modsAt...])
+        let manifestNames = Set(manifest.loadOrder.map { $0.name.lowercased() })
+        let loKept = (before?.loadOrder ?? []).filter { extraNames.contains($0.name.lowercased()) || manifestNames.contains($0.name.lowercased()) }
+        p.loadOrder = ModKit.mergeLoadOrder(loKept, collection: manifest.loadOrder, othersProvide: extraNames, appendNew: newHere)
+        // the profile remembers its Skyrim version (profile switches); one shared with other collections keeps its own
+        if let v = detectedVersion, sharedWith.isEmpty || p.gameVersion == nil { p.gameVersion = v }
         try saveProfile(p)
         var cols = installedCollections().filter { $0.slug != info.slug }
         // mods only the previous revision used: gone from the profile → removed unless another profile uses them
@@ -492,10 +502,40 @@ extension ModKit {
             throw ModKitError.invalid("collection \(slug) has no profile")
         }
         guard !manifest.loadOrder.isEmpty else { throw ModKitError.invalid("the collection has no load order") }
-        p.loadOrder = manifest.loadOrder
+        if installedCollections().contains(where: { $0.slug != slug && $0.profile == c.profile }) {
+            // a profile shared with other collections: only this one's plugins go back to its author's order
+            let own = Set(c.modIDs + (c.reused ?? []))
+            let othersProvide = Set(p.mods.filter { !own.contains($0.id) }.flatMap { topLevelNames($0.id) })
+            p.loadOrder = ModKit.mergeLoadOrder(p.loadOrder, collection: manifest.loadOrder, othersProvide: othersProvide, appendNew: false)
+        } else {
+            p.loadOrder = manifest.loadOrder
+        }
         if p.gameVersion == nil, let v = c.gameVersion { p.gameVersion = v }
         try saveProfile(p)
         if p.name == currentProfileName { try deploy(p) }
+    }
+
+    /// Top-level entries of a mod's staging folder, lowercased (its plugins are among them).
+    func topLevelNames(_ id: String) -> [String] {
+        guard let m = mod(id) else { return [] }
+        return ((try? FileManager.default.contentsOfDirectory(atPath: stagingFolder(m).path)) ?? []).map { $0.lowercased() }
+    }
+
+    /// A profile's plugins with a collection's load order merged in. Plugins that something else in the profile provides
+    /// (`othersProvide`, lowercased file names) keep their place and state; the collection's own plugins take its
+    /// author's order, each after the shared plugins listed before it, and no earlier than the collection's block: where
+    /// its plugins were, or the end with `appendNew` (a collection new to the profile).
+    static func mergeLoadOrder(_ current: [LoadOrderEntry], collection: [LoadOrderEntry], othersProvide: Set<String>, appendNew: Bool) -> [LoadOrderEntry] {
+        let own = Set(collection.map { $0.name.lowercased() }).subtracting(othersProvide)
+        var lo = current
+        let block = appendNew ? nil : lo.firstIndex { own.contains($0.name.lowercased()) }.map { i in lo[..<i].filter { !own.contains($0.name.lowercased()) }.count }
+        lo.removeAll { own.contains($0.name.lowercased()) }
+        var at = block ?? lo.count
+        for e in collection {
+            if let i = lo.firstIndex(where: { $0.name.lowercased() == e.name.lowercased() }) { at = max(at, i + 1); continue }
+            lo.insert(e, at: min(at, lo.count)); at += 1
+        }
+        return lo
     }
 
     /// The version key to switch to for a profile's wanted version: "steam" when Steam's install IS that version (lists
@@ -518,6 +558,23 @@ extension ModKit {
     public func removeCollection(slug: String) throws {
         var cols = installedCollections()
         guard let c = cols.first(where: { $0.slug == slug }) else { throw ModKitError.invalid("collection \(slug) is not installed") }
+        let others = cols.filter { $0.slug != slug && $0.profile == c.profile }
+        if !others.isEmpty, var p = profile(c.profile) {
+            // a profile shared with other collections stays: only this one's mods and plugins leave it
+            let keep = Set(others.flatMap { $0.modIDs + ($0.reused ?? []) })
+            let mine = Set(c.modIDs + (c.reused ?? [])).subtracting(keep)
+            let gone = Set(p.mods.filter { mine.contains($0.id) }.flatMap { topLevelNames($0.id) })
+            p.mods.removeAll { mine.contains($0.id) }
+            let left = Set(p.mods.flatMap { topLevelNames($0.id) })   // e.g. a translation's plugin named like the original
+            p.loadOrder.removeAll { gone.contains($0.name.lowercased()) && !left.contains($0.name.lowercased()) }
+            try saveProfile(p)
+            if currentProfileName == p.name { try deploy(p) }
+            let stillUsed = Set(profileNames().compactMap { profile($0) }.flatMap { $0.mods.map(\.id) })
+            for id in c.modIDs where !stillUsed.contains(id) { try? removeMod(id) }
+            cols.removeAll { $0.slug == slug }
+            try saveCollections(cols)
+            return
+        }
         let back = profile(c.previousProfile) != nil ? c.previousProfile : "Default"
         if profile(back) == nil { try createProfile(back) }
         if currentProfileName == c.profile {

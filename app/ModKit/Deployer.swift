@@ -662,7 +662,8 @@ public final class Deployer {
         var done: [String] = []
         for rel in rels {
             let k = rel.lowercased()
-            guard let e = m.entries[k] else { continue }
+            // (no mod copy left to put back: skipped before anything is touched, so the other files still come back)
+            guard let e = m.entries[k], lstatPath(e.source) != nil else { continue }
             let path = layout.gameDir.path + "/" + e.rel
             if lstatPath(path) != nil, !keepBackup { guard unlink(path) == 0 else { throw DeployError.io("remove \(path)") } }
             else if lstatPath(path) != nil {

@@ -64,6 +64,14 @@ func remountTests() {
     check(fm.fileExists(atPath: esp.path), "the plugin is deployed")
     try? fm.removeItem(at: esp)
     check(f.kit.restoreDriftedBinaries() == ["Data/base.esp"] && fm.fileExists(atPath: esp.path), "Play puts back a deleted plugin")
+    // a deleted plugin whose mod copy is gone too (mod folder edited in Finder) can't come back: the others still do
+    let staged = f.kit.mods.map { f.kit.stagingFolder($0).appendingPathComponent("base.esp") }.first { fm.fileExists(atPath: $0.path) }!
+    let espText = read(staged)!
+    try! fm.removeItem(at: staged); try! fm.removeItem(at: esp)
+    let h2 = FileHandle(forWritingAtPath: dll.path)!; h2.seekToEndOfFile(); h2.write(Data("runtime".utf8)); try! h2.close()
+    check(f.kit.restoreDriftedBinaries() == ["Data/SKSE/Plugins/base.dll"] && read(dll) == "dll", "a plugin with no mod copy left doesn't stop the DLL's restore")
+    check(!(try! f.kit.deployer.verify().changed.contains("Data/SKSE/Plugins/base.dll")), "the restored DLL is recorded")
+    write(staged, espText); check(f.kit.restoreDriftedBinaries() == ["Data/base.esp"], "back once the mod has it again")
 
     // purge after a remount gives back the vanilla game
     f = Fixture("remount-purge")

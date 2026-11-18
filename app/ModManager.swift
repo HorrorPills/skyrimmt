@@ -385,8 +385,9 @@ final class ModManagerModel: ObservableObject {
         // installers see the version the collection is made for (it gets pinned to it), not Steam's current one
         let target = info.gameVersions.compactMap { g in self.versionsKnown.first { g.hasPrefix($0) } }.first
         let k = kit, c = client(), optional = colOptional
-        // on top of an existing profile: that profile's version stays
-        let gv = (into == nil && target != nil && !info.gameVersions.contains { $0.hasPrefix(self.gameVersion()) }) ? target! : gameVersion()
+        // on top of an existing profile (now, or when it was first added): that profile's version stays
+        let onTop = into != nil || kit.installedCollections().first { $0.slug == info.slug }?.addedToProfile == true
+        let gv = (!onTop && target != nil && !info.gameVersions.contains { $0.hasPrefix(self.gameVersion()) }) ? target! : gameVersion()
         Task.detached {
             do {
                 let work = k.home.appendingPathComponent("cache/collection-\(info.slug)")
@@ -419,7 +420,7 @@ final class ModManagerModel: ObservableObject {
                        !info.gameVersions.contains(where: { $0.hasPrefix(self.versionSteam) }) {
                         self.message = (self.message ?? "") + " " + localizedFormat("It was made for Skyrim %@ (Steam); SKSE plugins built only for that version will not load on GOG %@ (Health shows them).", info.gameVersions.joined(separator: ", "), self.versionSteam)
                     }
-                    if into == nil, let want = detected ?? info.gameVersions.compactMap({ g in self.versionsKnown.first { g.hasPrefix($0) } }).first,
+                    if !onTop, let want = detected ?? info.gameVersions.compactMap({ g in self.versionsKnown.first { g.hasPrefix($0) } }).first,
                        want != "steam", want != self.kit.gameVersionKey {
                         if self.versionsInstalled.contains(want) { self.selectVersion(want) }
                         else { self.message = localizedFormat("%@ is made for Skyrim %@. Game tab → Skyrim version → Download %@, and SkyrimMT moves the collection there.", info.name, want, want) }
@@ -436,6 +437,11 @@ final class ModManagerModel: ObservableObject {
     /// (only collection.json is fetched). Its own profile stays until the player deletes it.
     func addCollectionToCurrentProfile(_ c: InstalledCollection) {
         guard !colRunning, busy == nil else { return }
+        // it changes the current profile: confirmed first (a stray click on the button would be hard to see)
+        let a = NSAlert(); a.messageText = c.name
+        a.informativeText = localized("Installs it on top of this profile's mods, reusing the mods it already has (nothing to download). Its own profile stays until you delete it.")
+        a.addButton(withTitle: localizedFormat("Add to “%@”", profile)); a.addButton(withTitle: localized("Cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
         guard let ref = CollectionRef("https://www.nexusmods.com/games/skyrimspecialedition/collections/\(c.slug)/revisions/\(c.revision)") else { return }
         let had = Set((c.modIDs + (c.reused ?? [])).compactMap { kit.mod($0)?.nexus?.modID })
         let cl = client(), into = profile
@@ -487,7 +493,7 @@ final class ModManagerModel: ObservableObject {
     func removeCollection(_ c: InstalledCollection) {
         guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let a = NSAlert(); a.messageText = localizedFormat("Remove the collection “%@”?", c.name)
-        a.informativeText = kit.installedCollections().contains { $0.slug != c.slug && $0.profile == c.profile }
+        a.informativeText = c.addedToProfile == true || kit.installedCollections().contains { $0.slug != c.slug && $0.profile == c.profile }
             ? localizedFormat("Removes its mods and plugins from “%@” (the mods only it uses are deleted). The profile and its other collections stay.", c.profile)
             : localizedFormat("Removes its profile and the mods only it uses, then switches back to “%@”.", c.previousProfile)
         a.addButton(withTitle: "Remove"); a.addButton(withTitle: "Cancel")
@@ -2032,7 +2038,10 @@ struct ModManagerView: View {
                         Label(localizedFormat("Made for a different game version (yours: %@). Some SKSE plugins may not load.", model.gameVersion()), systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                     }
-                    Text(localizedFormat("Installs into a new profile, “%@”. Other profiles are not changed.", ModKit.sanitize(info.name))).font(.caption).foregroundStyle(.secondary)
+                    // (an installed one is updated / repaired where it is: its own profile, or the one it was added to)
+                    if !model.kit.installedCollections().contains(where: { $0.slug == info.slug }) {
+                        Text(localizedFormat("Installs into a new profile, “%@”. Other profiles are not changed.", ModKit.sanitize(info.name))).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 if let w = model.colWaiting {
                     HStack(spacing: 10) {

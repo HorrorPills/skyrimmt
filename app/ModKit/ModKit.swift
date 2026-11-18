@@ -296,7 +296,7 @@ public final class ModKit {
         try lock.acquire(); defer { lock.release() }
         try recoverSlotSwapIfNeeded()
         let report = try deployer.deploy(stagedMods(profile))
-        let isCollection = installedCollections().contains { $0.profile == profile.name } && !profile.loadOrder.isEmpty
+        let isCollection = installedCollections().contains { $0.profile == profile.name && $0.addedToProfile != true } && !profile.loadOrder.isEmpty
         try syncLoadOrder(profile.loadOrder, newActive: !isCollection)
         return report
     }

@@ -250,6 +250,14 @@ public struct InstalledCollection: Codable, Equatable {
     public var gameVersion: String?      // the Skyrim version the collection runs on (from the SKSE it ships)
     public var failed: [String]? = nil   // names that didn't install (Repair retries them)
     public var reused: [String]? = nil   // already-installed mods it uses: the collection's, but not removed with it
+    /// Put on top of a profile that existed before ("Add to “‹profile›”"): the profile is the player's, not the
+    /// collection's — removing the collection takes out only its part, and the profile keeps its version and settings.
+    public var addedToProfile: Bool? = nil
+    /// Mods the profile already had that the collection uses too (in `reused`): the player's — they keep their place,
+    /// and stay when the collection is removed.
+    public var profileHad: [String]? = nil
+    /// The profile's mods it turned off (another file of a mod it ships, issue #8): back on when it is removed.
+    public var turnedOff: [String]? = nil
 }
 
 public struct CollectionDiff: Equatable {
@@ -283,9 +291,24 @@ extension ModKit {
         // after the revision). Ordering below still uses the pinned items (rules can name a file's MD5).
         let pinned = items
         var items = items, info = info
-        for i in items.indices where items[i].updatePolicy == "latest" && items[i].sourceType == "nexus" {
-            guard let mid = items[i].modID, let fid = items[i].fileID, let r = try? await client.filesWithUpdates(mid),
-                  let new = ModKit.latestFile(from: fid, files: r.files, updates: r.updates) else { continue }
+        // (looked up 6 at a time: a big collection can mark hundreds of mods "latest")
+        let toCheck = items.indices.filter { items[$0].updatePolicy == "latest" && items[$0].sourceType == "nexus" && items[$0].modID != nil && items[$0].fileID != nil }
+        let newest: [Int: NexusFileInfo] = await withTaskGroup(of: (Int, NexusFileInfo?).self) { group in
+            var next = 0, out: [Int: NexusFileInfo] = [:]
+            func add() {
+                guard next < toCheck.count else { return }
+                let i = toCheck[next], mid = items[i].modID!, fid = items[i].fileID!; next += 1
+                group.addTask {
+                    guard let r = try? await client.filesWithUpdates(mid) else { return (i, nil) }
+                    return (i, ModKit.latestFile(from: fid, files: r.files, updates: r.updates))
+                }
+            }
+            for _ in 0..<6 { add() }
+            for await (i, f) in group { if let f { out[i] = f }; add() }
+            return out
+        }
+        for i in toCheck {
+            guard let mid = items[i].modID, let fid = items[i].fileID, let new = newest[i] else { continue }
             let old = info.files.first { $0.modID == mid && $0.fileID == fid }
             items[i].fileID = new.fileID; items[i].md5 = new.md5
             info = CollectionInfo(slug: info.slug, name: info.name, revision: info.revision, downloadLink: info.downloadLink, gameVersions: info.gameVersions,
@@ -301,11 +324,19 @@ extension ModKit {
         // what the player added to the collection's profile (and generated output) survives an update
         let before = profile(profileName)
         let newHere = earlierInstall?.profile != profileName   // first install, or moved into another profile
+        let addedTo = newHere ? (into != nil && profile(profileName) != nil) : earlierInstall?.addedToProfile == true
+        // (in a profile shared with other collections, a mod they also list stays theirs: it keeps its place)
         let collectionMods = newHere ? [] : Set((earlierInstall?.modIDs ?? []) + (earlierInstall?.reused ?? []))
+            .subtracting(sharedWith.flatMap { $0.modIDs + ($0.reused ?? []) }).subtracting(earlierInstall?.profileHad ?? [])
+        let wasOff = Set(newHere ? [] : earlierInstall?.turnedOff ?? [])
         let extras = (before?.mods ?? []).filter { !collectionMods.contains($0.id) }
         // another file of a mod the collection ships would be a second copy of it: kept, but off (issue #8)
+        // (the very file the collection lists is no copy: it is reused, e.g. a base collection's mod an add-on lists too)
         let collectionNexusMods = Set(items.compactMap(\.modID))
-        func duplicatesCollection(_ id: String) -> Bool { mod(id)?.nexus.map { collectionNexusMods.contains($0.modID) } ?? false }
+        let collectionNexusFiles = Set(items.compactMap { i in i.modID.map { "\($0):\(i.fileID ?? -1)" } })
+        func duplicatesCollection(_ id: String) -> Bool {
+            mod(id)?.nexus.map { collectionNexusMods.contains($0.modID) && !collectionNexusFiles.contains("\($0.modID):\($0.fileID ?? -1)") } ?? false
+        }
         let extraNames = Set(extras.filter { !duplicatesCollection($0.id) }.flatMap { topLevelNames($0.id) })
         // keep the collection's metadata (reinstall / repair / diagnostics)
         if let b = manifest.bundleDir {
@@ -448,7 +479,14 @@ extension ModKit {
         p = try currentProfile()
         // the profile's other mods keep their order and place; the collection's block goes where it was (an update) or
         // after them (new to the profile: it wins conflicts). A mod they already use stays where it is.
-        let kept = extras.filter { mod($0.id) != nil }.map { e -> ProfileMod in var k = e; if duplicatesCollection(e.id) { k.enabled = false }; return k }
+        let kept = extras.filter { mod($0.id) != nil }.map { e -> ProfileMod in
+            var k = e
+            if duplicatesCollection(e.id) { k.enabled = false } else if wasOff.contains(e.id) { k.enabled = true }   // no longer shipped: back on
+            return k
+        }
+        let turnedOff = kept.filter { k in !k.enabled && (wasOff.contains(k.id) || extras.contains { $0.id == k.id && $0.enabled }) }.map(\.id)
+        // (only where the profile isn't the collection's own: there, every mod it uses is the collection's, as before)
+        let profileHad = addedTo || !sharedWith.isEmpty ? reusedHere.filter { id in extras.contains { $0.id == id } } : []
         let keptIDs = Set(kept.map(\.id))
         let block = order.compactMap { item in pinned.firstIndex(of: item).flatMap { ids[$0] } }.reduce(into: [ProfileMod]()) { r, id in
             if !keptIDs.contains(id), !r.contains(where: { $0.id == id }) { r.append(ProfileMod(id: id, enabled: true)) }
@@ -460,7 +498,7 @@ extension ModKit {
         let loKept = (before?.loadOrder ?? []).filter { extraNames.contains($0.name.lowercased()) || manifestNames.contains($0.name.lowercased()) }
         p.loadOrder = ModKit.mergeLoadOrder(loKept, collection: manifest.loadOrder, othersProvide: extraNames, appendNew: newHere)
         // the profile remembers its Skyrim version (profile switches); one shared with other collections keeps its own
-        if let v = detectedVersion, sharedWith.isEmpty || p.gameVersion == nil { p.gameVersion = v }
+        if let v = detectedVersion, !addedTo, sharedWith.isEmpty || p.gameVersion == nil { p.gameVersion = v }
         try saveProfile(p)
         var cols = installedCollections().filter { $0.slug != info.slug }
         // mods only the previous revision used: gone from the profile → removed unless another profile uses them
@@ -471,7 +509,9 @@ extension ModKit {
         earlier = earlier.filter { current.contains($0) || stillUsed.contains($0) }
         cols.append(InstalledCollection(slug: info.slug, name: info.name, revision: info.revision, profile: profileName,
                                         previousProfile: previous == profileName ? (earlier.isEmpty ? "Default" : (installedCollections().first { $0.slug == info.slug }?.previousProfile ?? "Default")) : previous,
-                                        modIDs: Array(Set(earlier + installedHere)), gameVersion: detectedVersion, failed: failedNames.isEmpty ? nil : failedNames, reused: reusedHere.isEmpty ? nil : reusedHere))
+                                        modIDs: Array(Set(earlier + installedHere)), gameVersion: detectedVersion, failed: failedNames.isEmpty ? nil : failedNames, reused: reusedHere.isEmpty ? nil : reusedHere,
+                                        addedToProfile: addedTo ? true : nil, profileHad: profileHad.isEmpty ? nil : profileHad,
+                                        turnedOff: turnedOff.isEmpty ? nil : turnedOff))
         try saveCollections(cols)
         try deploy(p)
         return profileName
@@ -517,15 +557,16 @@ extension ModKit {
             throw ModKitError.invalid("collection \(slug) has no profile")
         }
         guard !manifest.loadOrder.isEmpty else { throw ModKitError.invalid("the collection has no load order") }
-        if installedCollections().contains(where: { $0.slug != slug && $0.profile == c.profile }) {
-            // a profile shared with other collections: only this one's plugins go back to its author's order
-            let own = Set(c.modIDs + (c.reused ?? []))
+        if c.addedToProfile == true || installedCollections().contains(where: { $0.slug != slug && $0.profile == c.profile }) {
+            // a profile shared with other collections, or the player's own: only this one's plugins go back to its author's order
+            let own = Set(c.modIDs + (c.reused ?? [])).subtracting(c.profileHad ?? [])
             let othersProvide = Set(p.mods.filter { !own.contains($0.id) }.flatMap { topLevelNames($0.id) })
             p.loadOrder = ModKit.mergeLoadOrder(p.loadOrder, collection: manifest.loadOrder, othersProvide: othersProvide, appendNew: false)
         } else {
             p.loadOrder = manifest.loadOrder
         }
-        if p.gameVersion == nil, let v = c.gameVersion { p.gameVersion = v }
+        // (a player's profile it was added to keeps its own Skyrim version)
+        if p.gameVersion == nil, c.addedToProfile != true, let v = c.gameVersion { p.gameVersion = v }
         try saveProfile(p)
         if p.name == currentProfileName { try deploy(p) }
     }
@@ -567,18 +608,26 @@ extension ModKit {
     /// The Skyrim version a profile runs on: its own setting, else the version of the collection that made it.
     public func effectiveGameVersion(_ profileName: String) -> String {
         if let v = profile(profileName)?.gameVersion, !v.isEmpty { return v }
-        return installedCollections().first { $0.profile == profileName }?.gameVersion ?? "steam"
+        return installedCollections().first { $0.profile == profileName && $0.addedToProfile != true }?.gameVersion ?? "steam"
     }
 
     public func removeCollection(slug: String) throws {
         var cols = installedCollections()
         guard let c = cols.first(where: { $0.slug == slug }) else { throw ModKitError.invalid("collection \(slug) is not installed") }
         let others = cols.filter { $0.slug != slug && $0.profile == c.profile }
-        if !others.isEmpty, var p = profile(c.profile) {
-            // a profile shared with other collections stays: only this one's mods and plugins leave it
+        if !others.isEmpty || c.addedToProfile == true, var p = profile(c.profile) {
+            // a profile shared with other collections, or the player's own one it was added to, stays: only this one's
+            // mods and plugins leave it
+            // (the profile's own mods it used stay, and the ones it turned off come back on)
             let keep = Set(others.flatMap { $0.modIDs + ($0.reused ?? []) })
-            let mine = Set(c.modIDs + (c.reused ?? [])).subtracting(keep)
-            let gone = Set(p.mods.filter { mine.contains($0.id) }.flatMap { topLevelNames($0.id) })
+            let mine = Set(c.modIDs + (c.reused ?? [])).subtracting(keep).subtracting(c.profileHad ?? [])
+            let stillOff = Set(others.flatMap { $0.turnedOff ?? [] })
+            for i in p.mods.indices where (c.turnedOff ?? []).contains(p.mods[i].id) && !stillOff.contains(p.mods[i].id) { p.mods[i].enabled = true }
+            var gone = Set(p.mods.filter { mine.contains($0.id) }.flatMap { topLevelNames($0.id) })
+            // + the plugins its author's order lists that no installed mod brought (manual steps, failed downloads)
+            if let d = try? Data(contentsOf: stateDir.appendingPathComponent("collections/\(slug).json")), let m = try? CollectionManifest.parse(d) {
+                gone.formUnion(m.loadOrder.map { $0.name.lowercased() })
+            }
             p.mods.removeAll { mine.contains($0.id) }
             let left = Set(p.mods.flatMap { topLevelNames($0.id) })   // e.g. a translation's plugin named like the original
             p.loadOrder.removeAll { gone.contains($0.name.lowercased()) && !left.contains($0.name.lowercased()) }

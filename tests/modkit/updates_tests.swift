@@ -269,6 +269,103 @@ func collectionSharedProfileTests() {
     check(install(addon, into: prof) == prof && k.mods.count == count, "moved without installing anything again")
     check(k.installedCollections().first { $0.slug == "addonc" }?.profile == prof && modNames(prof).last == "Tr", "the add-on now lives on top of the base")
     check(k.profile(own)?.mods.contains { $0.id == trID } == true, "its old profile is left as it was")
+
+    // an add-on that lists one of the base's mods too: updating or repairing it leaves the base's mod and the player's
+    // mods where they are (the shared mod belongs to the base's part)
+    try! k.removeCollection(slug: "addonc")
+    let addon2 = col("addonc", "Addon", 2, [("Tr", 6, 60, "ff"), ("Base", 1, 10, "aa")], ["Base.esp", "Patch.esp", "TrNew.esp"])
+    _ = install(addon2, into: prof)
+    check(modNames(prof) == ["Base", "Patch", "Mine", "Tr"], "the shared mod stays in the base's part (\(modNames(prof)))")
+    _ = install(addon2)   // Repair / Update of the add-on
+    check(modNames(prof) == ["Base", "Patch", "Mine", "Tr"], "repairing the add-on moves nothing (\(modNames(prof)))")
+    try! k.removeCollection(slug: "addonc")
+    check(modNames(prof) == ["Base", "Patch", "Mine"] && k.profile(prof)!.mods.allSatisfy(\.enabled), "removing it leaves the base's mods (\(modNames(prof)))")
+}
+
+/// "Add to “‹profile›”" on the player's own profile: the collection goes on top of it, and removing the collection later
+/// takes out only its part. The profile, the player's mods, how new plugins start and the profile's Skyrim version stay
+/// the player's (it was never the collection's profile).
+func collectionOnPlayerProfileTests() {
+    section("a collection added on top of the player's own profile")
+    let f = Fixture("colonmine")
+    let k = f.kit
+    let src = freshDir("colonmine-src")
+    try! fm.createDirectory(at: k.downloadsDir, withIntermediateDirectories: true)
+    func archive(_ name: String, _ mid: Int, _ fid: Int, _ md5: String, _ files: [String: String]) {
+        for (rel, c) in files { write(src.appendingPathComponent("\(name)-\(fid)/\(rel)"), c) }
+        pack(src.appendingPathComponent("\(name)-\(fid)"), k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip"), format: "zip")
+        write(k.downloadsDir.appendingPathComponent("\(name)-\(fid).zip.meta.json"),
+              #"{"modID":\#(mid),"fileID":\#(fid),"modName":"\#(name)","fileName":"\#(name)","version":"\#(fid)","md5":"\#(md5)","downloadedAt":"2026-10-18T10:00:00Z"}"#)
+    }
+    archive("SKSE", 30379, 1, "s1", ["skse64_loader.exe": "loader", "skse64_1_6_1170.dll": "dll", "Data/Scripts/x.pex": "pex"])
+    archive("Col", 5, 50, "c1", ["Col.esp": "col"])
+    archive("Lib", 8, 81, "l1", ["Lib.esp": "lib, the collection's file"])
+    // it also lists UI (7/70), a file the player's profile already has, and Lib 8/81, another file of the player's OldLib
+    let man0Data = Data(#"""
+        {"info":{"name":"On Top"},"mods":[
+          {"name":"SKSE","optional":false,"phase":0,"source":{"type":"nexus","modId":30379,"fileId":1,"md5":"s1"}},
+          {"name":"Col","optional":false,"phase":0,"source":{"type":"nexus","modId":5,"fileId":50,"md5":"c1"}},
+          {"name":"UI","optional":false,"phase":0,"source":{"type":"nexus","modId":7,"fileId":70,"md5":"u1"}},
+          {"name":"Lib","optional":false,"phase":0,"source":{"type":"nexus","modId":8,"fileId":81,"md5":"l1"}}],
+         "modRules":[],"loadOrder":[{"name":"UI.esp","enabled":true},{"name":"Lib.esp","enabled":true},{"name":"Col.esp","enabled":true},{"name":"Manual.esp","enabled":true}]}
+        """#.utf8)
+    let man0 = try! CollectionManifest.parse(man0Data)
+    // (Manual.esp: a plugin of a mod the player installs by hand — none of its mods brings it)
+    var man = man0; man.bundleDir = freshDir("colonmine-bundle")
+    try! man0Data.write(to: man.bundleDir!.appendingPathComponent("collection.json"))
+    let info = CollectionInfo(slug: "ontop", name: "On Top", revision: 1, downloadLink: "", gameVersions: ["1.6.1170"], totalSize: 0,
+                              files: [CollectionFile(modID: 30379, fileID: 1, modName: "SKSE", fileName: "SKSE", version: "1", size: 0, optional: false),
+                                      CollectionFile(modID: 5, fileID: 50, modName: "Col", fileName: "Col", version: "1", size: 0, optional: false),
+                                      CollectionFile(modID: 7, fileID: 70, modName: "UI", fileName: "UI", version: "1", size: 0, optional: false),
+                                      CollectionFile(modID: 8, fileID: 81, modName: "Lib", fileName: "Lib", version: "2", size: 0, optional: false)])
+    let client = NexusClient(apiKey: "k", appVersion: "t", baseURL: URL(string: "https://api.test/v1/")!, session: stubSession())
+    _ = f.addMod("Mine", ["Mine.esp": "mine"])
+    for (name, mid, fid) in [("UI", 7, 70), ("OldLib", 8, 80)] {
+        _ = f.addMod(name, ["\(name).esp": name])
+        let i = k.mods.firstIndex { $0.name == name }!; var r = k.mods[i]; r.nexus = NexusRef(modID: mid, fileID: fid); k.replaceMod(at: i, with: r)
+    }
+    var p = try! k.currentProfile(); p.loadOrder = ["Mine.esp", "UI.esp", "OldLib.esp"].map { LoadOrderEntry(name: $0, active: true) }; try! k.saveProfile(p)
+    try! k.deploy()
+    let mine = k.currentProfileName, profiles = k.profileNames(), version = k.profile(mine)?.gameVersion
+    func modNames() -> [String] { k.profile(mine)!.mods.compactMap { k.mod($0.id)?.name } }
+    let got = runAsync { try await k.installCollection(info: info, manifest: man, items: man.mods, client: client, gameVersion: "1.7.104", into: mine, progress: { _, _ in }) }
+    check(got == mine && k.profileNames() == profiles && modNames() == ["Mine", "UI", "OldLib", "SKSE", "Col", "Lib"], "on top of the player's profile (\(modNames()))")
+    func on(_ n: String) -> Bool { k.profile(mine)!.mods.first { k.mod($0.id)?.name == n }!.enabled }
+    check(on("UI") && !on("OldLib") && on("Lib"), "the player's copy of a mod it ships another file of is off while it is there (issue #8)")
+    check(k.profile(mine)?.gameVersion == version && k.effectiveGameVersion(mine) == (version ?? "steam"),
+          "the profile keeps its Skyrim version (\(k.effectiveGameVersion(mine)))")
+    _ = f.addMod("Later", ["Later.esp": "later"]); try! k.deploy()
+    check(PluginsTxt.read(k.pluginsTxt).first { $0.name == "Later.esp" }?.active == true, "a mod the player adds later starts active, as in any own profile")
+
+    // Update / Repair (no `into`): it stays the player's profile
+    let info2 = CollectionInfo(slug: "ontop", name: "On Top", revision: 2, downloadLink: "", gameVersions: ["1.6.1170"], totalSize: 0, files: info.files)
+    _ = runAsync { try await k.installCollection(info: info2, manifest: man, items: man.mods, client: client, gameVersion: "1.7.104", progress: { _, _ in }) }
+    check(k.installedCollections().first?.addedToProfile == true && k.installedCollections().first?.revision == 2 && k.effectiveGameVersion(mine) == (version ?? "steam"),
+          "an update keeps it on top of the player's profile, version unchanged")
+    check(modNames() == ["Mine", "UI", "OldLib", "SKSE", "Col", "Lib", "Later"], "the collection updated in its place, the player's mods kept (\(modNames()))")
+    check(on("UI") && !on("OldLib"), "the player's OldLib still off")
+    var q = k.profile(mine)!; q.loadOrder = q.loadOrder.reversed(); try! k.saveProfile(q)
+    let mineFirst = q.loadOrder.filter { ["Mine.esp", "UI.esp", "Later.esp"].contains($0.name) }.map(\.name)
+    try! k.applyCollectionLoadOrder(slug: "ontop", manifest: man)
+    check(k.profile(mine)!.loadOrder.filter { ["Mine.esp", "UI.esp", "Later.esp"].contains($0.name) }.map(\.name) == mineFirst
+          && k.profile(mine)!.loadOrder.contains { $0.name == "Mine.esp" },
+          "Restore load order keeps the player's plugins and their order (\(k.profile(mine)!.loadOrder.map(\.name)))")
+    check(k.profile(mine)?.gameVersion == version && k.effectiveGameVersion(mine) == (version ?? "steam"),
+          "and the profile's Skyrim version (\(k.effectiveGameVersion(mine)))")
+
+    try! k.removeCollection(slug: "ontop")
+    check(k.profileNames() == profiles && k.currentProfileName == mine, "removing the collection keeps the player's profile (\(k.profileNames()))")
+    check(modNames() == ["Mine", "UI", "OldLib", "Later"], "and the player's mods, the ones it used too (\(modNames()))")
+    check(on("UI") && on("OldLib") && on("Mine") && on("Later"), "the mod it turned off is back on")
+    check(!k.profile(mine)!.loadOrder.contains { ["Col.esp", "Lib.esp", "Manual.esp"].contains($0.name) },
+          "its plugins leave the profile's order, also those no mod brought (\(k.profile(mine)!.loadOrder.map(\.name)))")
+    let txt = PluginsTxt.read(k.pluginsTxt)
+    check(Set(txt.filter(\.active).map(\.name)) == ["Mine.esp", "UI.esp", "OldLib.esp", "Later.esp"] && !txt.contains { $0.name == "Col.esp" || $0.name == "Lib.esp" },
+          "and their plugins, active (\(txt.map { "\($0.name)=\($0.active)" }))")
+    check(fm.fileExists(atPath: f.game.appendingPathComponent("Data/Mine.esp").path) && !fm.fileExists(atPath: f.game.appendingPathComponent("Data/Col.esp").path)
+          && !fm.fileExists(atPath: f.game.appendingPathComponent("skse64_loader.exe").path), "the game folder has the player's mods, not the collection's")
+    check(k.installedCollections().isEmpty && !k.mods.contains { $0.name == "Col" || $0.name == "Lib" } && k.mods.contains { $0.name == "UI" },
+          "the collection and the mods it installed are gone, the player's stay")
 }
 
 /// Vortex's updatePolicy "latest": the collection pins a file, but the author's later update of it is installed.
@@ -286,13 +383,15 @@ func collectionLatestPolicyTests() {
     }
     archive("Obj", 9, 90, "o1", "objets 1.0.1"); archive("Obj", 9, 91, "o3", "objets 1.0.3")
     archive("Pin", 8, 80, "p1", "pin 1"); archive("Pin", 8, 81, "p2", "pin 2")
+    archive("Lat", 7, 70, "l1", "lat 1"); archive("Lat", 7, 72, "l2", "lat 2")
     let man = try! CollectionManifest.parse(Data(#"""
         {"info":{"name":"Latest Col"},"mods":[
           {"name":"Obj","optional":false,"phase":0,"source":{"type":"nexus","modId":9,"fileId":90,"md5":"o1","updatePolicy":"latest"}},
-          {"name":"Pin","optional":false,"phase":0,"source":{"type":"nexus","modId":8,"fileId":80,"md5":"p1","updatePolicy":"exact"}}],
-         "modRules":[],"loadOrder":[{"name":"Obj.esp","enabled":true},{"name":"Pin.esp","enabled":true}]}
+          {"name":"Pin","optional":false,"phase":0,"source":{"type":"nexus","modId":8,"fileId":80,"md5":"p1","updatePolicy":"exact"}},
+          {"name":"Lat","optional":false,"phase":0,"source":{"type":"nexus","modId":7,"fileId":70,"md5":"l1","updatePolicy":"latest"}}],
+         "modRules":[],"loadOrder":[{"name":"Obj.esp","enabled":true},{"name":"Pin.esp","enabled":true},{"name":"Lat.esp","enabled":true}]}
         """#.utf8))
-    check(man.mods.map(\.updatePolicy) == ["latest", "exact"], "update policies read from collection.json")
+    check(man.mods.map(\.updatePolicy) == ["latest", "exact", "latest"], "update policies read from collection.json")
     func files(_ mid: Int, _ a: Int, _ b: Int, _ md5: String) -> Data {
         json(["files": [["file_id": a, "name": "F", "file_name": "F-\(a).zip", "version": "1.0.1"],
                         ["file_id": b, "name": "F", "file_name": "F-\(b).zip", "version": "1.0.3", "md5": md5]],
@@ -301,19 +400,22 @@ func collectionLatestPolicyTests() {
     StubProtocol.handler = { r in
         if r.url!.path.hasSuffix("mods/9/files.json") { return (200, [:], files(9, 90, 91, "o3")) }
         if r.url!.path.hasSuffix("mods/8/files.json") { return (200, [:], files(8, 80, 81, "p2")) }
+        if r.url!.path.hasSuffix("mods/7/files.json") { return (200, [:], files(7, 70, 72, "l2")) }
         return (404, [:], Data())
     }
     defer { StubProtocol.handler = nil }
     let client = NexusClient(apiKey: "k", appVersion: "t", baseURL: URL(string: "https://api.test/v1/")!, session: stubSession())
     let info = CollectionInfo(slug: "latcol", name: "Latest Col", revision: 1, downloadLink: "", gameVersions: [], totalSize: 0,
                               files: [CollectionFile(modID: 9, fileID: 90, modName: "Obj", fileName: "Obj", version: "1.0.1", size: 0, optional: false),
-                                      CollectionFile(modID: 8, fileID: 80, modName: "Pin", fileName: "Pin", version: "1", size: 0, optional: false)])
+                                      CollectionFile(modID: 8, fileID: 80, modName: "Pin", fileName: "Pin", version: "1", size: 0, optional: false),
+                                      CollectionFile(modID: 7, fileID: 70, modName: "Lat", fileName: "Lat", version: "1", size: 0, optional: false)])
     let prof = runAsync { try await k.installCollection(info: info, manifest: man, items: man.mods, client: client, gameVersion: "1.6.1170", progress: { _, _ in }) }
     check(read(f.game.appendingPathComponent("Data/Obj.esp")) == "objets 1.0.3", "\"latest\": the author's newest file is installed")
     check(read(f.game.appendingPathComponent("Data/Pin.esp")) == "pin 1", "\"exact\": the pinned file stays")
+    check(read(f.game.appendingPathComponent("Data/Lat.esp")) == "lat 2", "a second \"latest\" mod gets its own newest file")
     let obj = k.mods.first { $0.nexus?.modID == 9 }
     check(obj?.nexus?.fileID == 91 && obj?.version == "1.0.3", "the record names the file installed (\(String(describing: obj?.version)))")
-    check(k.profile(prof)?.mods.count == 2 && k.profile(prof)?.loadOrder.map(\.name) == ["Obj.esp", "Pin.esp"], "order and plugins as the collection says")
+    check(k.profile(prof)?.mods.count == 3 && k.profile(prof)?.loadOrder.map(\.name) == ["Obj.esp", "Pin.esp", "Lat.esp"], "order and plugins as the collection says")
 }
 
 func versionKeyTests() {

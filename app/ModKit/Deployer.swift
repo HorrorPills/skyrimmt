@@ -210,6 +210,11 @@ func atomicWrite(_ text: String, to url: URL) throws {
 }
 
 struct FileStat { let dev: Int64; let ino: UInt64; let size: Int64; let mtimeNs: Int64; let isDir: Bool }
+/// An inode number that identifies a file across mounts. macOS 15's exFAT driver (FSKit) gives a file created during the
+/// current mount a temporary number counted down from UInt64.max and the real one only after the drive is mounted again
+/// (macOS 27 assigns the real one at once; measured 2026-11-18): after a replug every such file read as replaced, and
+/// the temporary numbers are handed out again in the next mount. Such a number decides nothing; size and date do.
+func stableIno(_ i: UInt64) -> Bool { i < 0xFFFF_FFFF_0000_0000 }
 /// Device number of the volume holding `path` now (stat follows a symlinked game folder).
 func volumeDevice(_ path: String) -> Int64? {
     var st = stat()
@@ -242,7 +247,7 @@ public final class Deployer {
     ///   the current time. The date must match to the nanosecond — unless the drive stores coarser dates (exFAT 10 ms,
     ///   HFS+ 1 s, FAT 2 s: no part below 10 ms), then within 2 s.
     static func sameFile(_ st: FileStat, _ e: ManifestEntry, volume: Int64?) -> Bool {
-        if st.ino == e.ino {
+        if st.ino == e.ino && stableIno(st.ino) {
             if st.dev == e.dev { return true }
             if let volume, st.dev == volume, e.dev != volume { return true }
         }
@@ -384,9 +389,10 @@ public final class Deployer {
                     let e = same[i].1
                     guard let st = lstatPath(e.source) else { return }   // gone: the deploy reports it when placing
                     // SkyrimMT's built-in files are new copies after every app install: their size + date decide
-                    if e.srcIno != 0 && st.ino != e.srcIno && !e.modID.hasPrefix("builtin:") { out[i] = 1; return }
+                    if e.srcIno != 0 && stableIno(e.srcIno) && stableIno(st.ino) && st.ino != e.srcIno && !e.modID.hasPrefix("builtin:") { out[i] = 1; return }
                     if st.size != e.size || st.mtimeNs / 1_000_000_000 != e.mtimeNs / 1_000_000_000 { out[i] = 1; return }
-                    if e.srcIno == 0 { out[i] = 2; ino[i] = st.ino }
+                    // not recorded yet (older manifest), or only a temporary number (stableIno): the real one, once known
+                    if (e.srcIno == 0 || !stableIno(e.srcIno)) && stableIno(st.ino) && st.ino != e.srcIno { out[i] = 2; ino[i] = st.ino }
                 }
             }
         }
@@ -470,7 +476,7 @@ public final class Deployer {
     /// The file at the target is our placement of `src`: a hardlink (same inode) or a clone/copy (clonefile and our
     /// copy keep size and nanosecond mtime).
     private func ours(_ st: FileStat, _ src: FileStat) -> Bool {
-        (st.ino == src.ino && st.dev == src.dev) || (st.size == src.size && st.mtimeNs == src.mtimeNs && !st.isDir)
+        (st.ino == src.ino && stableIno(st.ino) && st.dev == src.dev) || (st.size == src.size && st.mtimeNs == src.mtimeNs && !st.isDir)
     }
 
     /// APFS clone (fastest on APFS: ~70–100 µs vs ~260 µs for link(2), measured; independent copy-on-write file, so a
@@ -638,7 +644,7 @@ public final class Deployer {
                 let e = list[i]
                 guard let st = lstatPath(game + "/" + e.rel) else { out[i] = 1; return }
                 // the same inode must also keep size and exact date (rewritten in place); a copy matched on both already
-                if !Deployer.sameFile(st, e, volume: volume) || (st.ino == e.ino && (st.size != e.size || st.mtimeNs != e.mtimeNs)) { out[i] = 2 }
+                if !Deployer.sameFile(st, e, volume: volume) || (st.ino == e.ino && stableIno(st.ino) && (st.size != e.size || st.mtimeNs != e.mtimeNs)) { out[i] = 2 }
             }
         }
         var r = VerifyReport()
@@ -656,7 +662,8 @@ public final class Deployer {
         var done: [String] = []
         for rel in rels {
             let k = rel.lowercased()
-            guard let e = m.entries[k] else { continue }
+            // (no mod copy left to put back: skipped before anything is touched, so the other files still come back)
+            guard let e = m.entries[k], lstatPath(e.source) != nil else { continue }
             let path = layout.gameDir.path + "/" + e.rel
             if lstatPath(path) != nil, !keepBackup { guard unlink(path) == 0 else { throw DeployError.io("remove \(path)") } }
             else if lstatPath(path) != nil {

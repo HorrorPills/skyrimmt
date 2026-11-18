@@ -36,7 +36,7 @@ setCursorPosition:]`, Wine 10.0.
 * **Pandora Behaviour Engine+** (GPL-3.0-or-later, https://github.com/Monitor221hz/Pandora-Behaviour-Engine-Plus):
   native macOS arm64 build of commit `1f26bbc` (v5.0.0-beta) with `tools/pandora/macos.patch` (path separators,
   `--tesv`/`-o` honoured, CRLF text output; each change commented), built by `tools/pandora/build.sh` into
-  `$SKYRIM_HOME/tools/pandora` (.NET runtime self-contained, MIT). SkyrimMT runs it as a separate program and keeps its
+  `$SKYRIM_HOME/tools/pandora` (Microsoft's .NET runtime self-contained, MIT). SkyrimMT runs it as a separate program and keeps its
   output as a mod. Any binary distribution ships with the patched source (upstream URL + commit + patch).
 * **BodySlide and Outfit Studio** (GPL-3.0, https://github.com/ousnius/BodySlide-and-Outfit-Studio): native macOS
   arm64 build of tag `v6.0.0` with `tools/bodyslide/macos.patch` (GLEW on macOS, two clang fixes, no window updates
@@ -50,7 +50,7 @@ setCursorPosition:]`, Wine 10.0.
   of https://github.com/wabbajack-tools/wabbajack): native macOS arm64 build of commit `9bba792` (v0.5.10) with
   `tools/wabbajack/macos.patch` (SkyrimMT Wine shim instead of Proton for texconv/texdiag, game/data folder overrides,
   Microsoft.Data.Sqlite (MIT) instead of System.Data.SQLite for osx-arm64, Nexus checked only when needed, stack traces
-  logged), built by `tools/wabbajack/build.sh` into `$SKYRIM_HOME/tools/wabbajack`. Bundles Microsoft's texconv/texdiag
+  logged, a missing game file that is only a log file skipped), built by `tools/wabbajack/build.sh` into `$SKYRIM_HOME/tools/wabbajack`. Bundles Microsoft's texconv/texdiag
   (DirectXTex, MIT) and 7-Zip (LGPL-2.1) as shipped upstream. Run as a separate program; source + patch accompany any
   binary distribution.
 * **Distribution of the three native tools above:** prebuilt archives (`pandora-`, `bodyslide-`,

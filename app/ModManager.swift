@@ -351,10 +351,23 @@ final class ModManagerModel: ObservableObject {
         return !ours.isEmpty && !info.gameVersions.contains { $0.hasPrefix(ours) }
     }
 
-    func installCollection() {
+    /// `into`: an existing profile to install it on top of (nil: its own profile; a first install asks).
+    func installCollection(into: String? = nil) {
         guard let info = colInfo, !colRunning else { return }
         guard !gameRunning() else { message = localized("Quit Skyrim before installing a collection."); return }
         guard nexusKeyStored else { section = .downloads; message = localized("Add your Nexus Mods API key first."); return }
+        var into = into
+        if into == nil, !kit.installedCollections().contains(where: { $0.slug == info.slug }), !(kit.profile(profile)?.mods.isEmpty ?? true) {
+            let a = NSAlert(); a.messageText = localizedFormat("Where should “%@” go?", info.name)
+            a.informativeText = localizedFormat("In a profile of its own, or on top of the mods of “%@” (for add-ons such as translations or texture packs: its mods then win conflicts).", profile)
+            a.addButton(withTitle: localized("New Profile")); a.addButton(withTitle: localizedFormat("Add to “%@”", profile)); a.addButton(withTitle: localized("Cancel"))
+            switch a.runModal() {
+            case .alertFirstButtonReturn: break
+            case .alertSecondButtonReturn: into = profile
+            default: return
+            }
+        }
+        if let into, into == profile { kit.backupSaves(reason: "before adding \(info.name)"); autoSnapshot("Before adding \(info.name)") }
         let free = !(nexusUser?.premium ?? true)
         if free {
             // Nexus rule: free accounts start every download on the website. SkyrimMT opens each file's page in turn and
@@ -372,7 +385,9 @@ final class ModManagerModel: ObservableObject {
         // installers see the version the collection is made for (it gets pinned to it), not Steam's current one
         let target = info.gameVersions.compactMap { g in self.versionsKnown.first { g.hasPrefix($0) } }.first
         let k = kit, c = client(), optional = colOptional
-        let gv = (target != nil && !info.gameVersions.contains { $0.hasPrefix(self.gameVersion()) }) ? target! : gameVersion()
+        // on top of an existing profile (now, or when it was first added): that profile's version stays
+        let onTop = into != nil || kit.installedCollections().first { $0.slug == info.slug }?.addedToProfile == true
+        let gv = (!onTop && target != nil && !info.gameVersions.contains { $0.hasPrefix(self.gameVersion()) }) ? target! : gameVersion()
         Task.detached {
             do {
                 let work = k.home.appendingPathComponent("cache/collection-\(info.slug)")
@@ -381,7 +396,7 @@ final class ModManagerModel: ObservableObject {
                 let manifest = try await c.downloadBundle(info, into: work)
                 let items = manifest.mods.filter { !$0.optional || ($0.fileID.map { optional.contains($0) } ?? false) }
                 await MainActor.run { self.colItems = items; self.colStates = items.map { _ in .queued }; self.busy = localizedFormat("Installing %@…", info.name) }
-                let prof = try await k.installCollection(info: info, manifest: manifest, items: items, client: c, gameVersion: gv, progress: { i, st in
+                let prof = try await k.installCollection(info: info, manifest: manifest, items: items, client: c, gameVersion: gv, into: into, progress: { i, st in
                     Task { @MainActor in if i < self.colStates.count { self.colStates[i] = st } }
                 }, nxmFor: free ? { item in await self.waitForNxm(item) } : nil)
                 try? FileManager.default.removeItem(at: work)
@@ -405,7 +420,7 @@ final class ModManagerModel: ObservableObject {
                        !info.gameVersions.contains(where: { $0.hasPrefix(self.versionSteam) }) {
                         self.message = (self.message ?? "") + " " + localizedFormat("It was made for Skyrim %@ (Steam); SKSE plugins built only for that version will not load on GOG %@ (Health shows them).", info.gameVersions.joined(separator: ", "), self.versionSteam)
                     }
-                    if let want = detected ?? info.gameVersions.compactMap({ g in self.versionsKnown.first { g.hasPrefix($0) } }).first,
+                    if !onTop, let want = detected ?? info.gameVersions.compactMap({ g in self.versionsKnown.first { g.hasPrefix($0) } }).first,
                        want != "steam", want != self.kit.gameVersionKey {
                         if self.versionsInstalled.contains(want) { self.selectVersion(want) }
                         else { self.message = localizedFormat("%@ is made for Skyrim %@. Game tab → Skyrim version → Download %@, and SkyrimMT moves the collection there.", info.name, want, want) }
@@ -415,6 +430,31 @@ final class ModManagerModel: ObservableObject {
                 await MainActor.run { self.colRunning = false; self.busy = nil; self.message = localizedFormat("Collection: %@", "\(error)"); self.reload(); self.reloadCollections()
                     Notify.send(localized("Collection install stopped"), "\(error)") }
             }
+        }
+    }
+
+    /// Put an installed collection on top of the current profile: the revision it has, so its installed mods are reused
+    /// (only collection.json is fetched). Its own profile stays until the player deletes it.
+    func addCollectionToCurrentProfile(_ c: InstalledCollection) {
+        guard !colRunning, busy == nil else { return }
+        // it changes the current profile: confirmed first (a stray click on the button would be hard to see)
+        let a = NSAlert(); a.messageText = c.name
+        a.informativeText = localized("Installs it on top of this profile's mods, reusing the mods it already has (nothing to download). Its own profile stays until you delete it.")
+        a.addButton(withTitle: localizedFormat("Add to “%@”", profile)); a.addButton(withTitle: localized("Cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        guard let ref = CollectionRef("https://www.nexusmods.com/games/skyrimspecialedition/collections/\(c.slug)/revisions/\(c.revision)") else { return }
+        let had = Set((c.modIDs + (c.reused ?? [])).compactMap { kit.mod($0)?.nexus?.modID })
+        let cl = client(), into = profile
+        busy = localized("Looking up the collection…")
+        Task {
+            do {
+                let info = try await cl.collection(ref)
+                busy = nil
+                colInfo = info; colItems = []; colStates = []
+                colOptional = Set(info.files.filter { $0.optional && had.contains($0.modID) }.map(\.fileID))
+                colText = "https://www.nexusmods.com/games/skyrimspecialedition/collections/\(c.slug)"
+                installCollection(into: into)
+            } catch { busy = nil; message = "\(error)" }
         }
     }
 
@@ -453,7 +493,9 @@ final class ModManagerModel: ObservableObject {
     func removeCollection(_ c: InstalledCollection) {
         guard !gameRunning() else { message = localized("Quit Skyrim first."); return }
         let a = NSAlert(); a.messageText = localizedFormat("Remove the collection “%@”?", c.name)
-        a.informativeText = localizedFormat("Removes its profile and the mods only it uses, then switches back to “%@”.", c.previousProfile)
+        a.informativeText = c.addedToProfile == true || kit.installedCollections().contains { $0.slug != c.slug && $0.profile == c.profile }
+            ? localizedFormat("Removes its mods and plugins from “%@” (the mods only it uses are deleted). The profile and its other collections stay.", c.profile)
+            : localizedFormat("Removes its profile and the mods only it uses, then switches back to “%@”.", c.previousProfile)
         a.addButton(withTitle: "Remove"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let k = kit
@@ -1996,7 +2038,10 @@ struct ModManagerView: View {
                         Label(localizedFormat("Made for a different game version (yours: %@). Some SKSE plugins may not load.", model.gameVersion()), systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                     }
-                    Text(localizedFormat("Installs into a new profile, “%@”. Other profiles are not changed.", ModKit.sanitize(info.name))).font(.caption).foregroundStyle(.secondary)
+                    // (an installed one is updated / repaired where it is: its own profile, or the one it was added to)
+                    if !model.kit.installedCollections().contains(where: { $0.slug == info.slug }) {
+                        Text(localizedFormat("Installs into a new profile, “%@”. Other profiles are not changed.", ModKit.sanitize(info.name))).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 if let w = model.colWaiting {
                     HStack(spacing: 10) {
@@ -2063,6 +2108,11 @@ struct ModManagerView: View {
                                 .foregroundStyle(.green).help(model.collectionDiffText(c, l))
                             Button("Update") { model.updateCollection(c) }.disabled(model.colRunning || model.busy != nil)
                                 .help("Installs revision \(l.revision) into the same profile. Mods you added yourself are kept.")
+                        }
+                        if c.profile != model.profile {
+                            Button(localizedFormat("Add to “%@”", model.profile)) { model.addCollectionToCurrentProfile(c) }
+                                .disabled(model.colRunning || model.busy != nil)
+                                .help("Installs it on top of this profile's mods, reusing the mods it already has (nothing to download). Its own profile stays until you delete it.")
                         }
                         Button("Restore load order") { model.restoreCollectionLoadOrder(c) }
                             .help("Restores the author's plugin order and active plugins. Mods are not changed.")

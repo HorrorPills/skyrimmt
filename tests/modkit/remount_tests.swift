@@ -60,6 +60,18 @@ func remountTests() {
     check(Set(v.changed) == ["Data/SKSE/Plugins/base.ini", "Data/SKSE/Plugins/base.dll"], "a rewritten file and an edited one are changes (\(v.changed))")
     check(f.kit.restoreDriftedBinaries() == ["Data/SKSE/Plugins/base.dll"], "Play puts back only the edited DLL")
     check(read(dll) == "dll", "the mod's DLL is back")
+    let esp = f.game.appendingPathComponent("Data/base.esp")   // deleted by something else (another tool's updater)
+    check(fm.fileExists(atPath: esp.path), "the plugin is deployed")
+    try? fm.removeItem(at: esp)
+    check(f.kit.restoreDriftedBinaries() == ["Data/base.esp"] && fm.fileExists(atPath: esp.path), "Play puts back a deleted plugin")
+    // a deleted plugin whose mod copy is gone too (mod folder edited in Finder) can't come back: the others still do
+    let staged = f.kit.mods.map { f.kit.stagingFolder($0).appendingPathComponent("base.esp") }.first { fm.fileExists(atPath: $0.path) }!
+    let espText = read(staged)!
+    try! fm.removeItem(at: staged); try! fm.removeItem(at: esp)
+    let h2 = FileHandle(forWritingAtPath: dll.path)!; h2.seekToEndOfFile(); h2.write(Data("runtime".utf8)); try! h2.close()
+    check(f.kit.restoreDriftedBinaries() == ["Data/SKSE/Plugins/base.dll"] && read(dll) == "dll", "a plugin with no mod copy left doesn't stop the DLL's restore")
+    check(!(try! f.kit.deployer.verify().changed.contains("Data/SKSE/Plugins/base.dll")), "the restored DLL is recorded")
+    write(staged, espText); check(f.kit.restoreDriftedBinaries() == ["Data/base.esp"], "back once the mod has it again")
 
     // purge after a remount gives back the vanilla game
     f = Fixture("remount-purge")
@@ -155,6 +167,59 @@ private func movedHomeTest() {
     let tex = game.appendingPathComponent("Data/Textures/base/rock.dds")
     try! fm.removeItem(at: tex); write(tex, "the player's own rock, bigger")
     check(try! kit.deployer.verify().changed == ["Data/Textures/base/rock.dds"], "a replaced file is a change")
+
+    temporaryInodeTests()
+}
+
+/// Rewrite the manifest as macOS 15's exFAT driver had it written: every file created during that mount (deployed files
+/// and freshly installed mods alike) had a temporary inode number counted down from UInt64.max; the real ones show
+/// only after the drive is mounted again — which is what the files on this volume now have.
+private func useTemporaryInodes(_ kit: ModKit) {
+    let url = kit.deployer.layout.manifestURL
+    var n: UInt64 = 0
+    let lines = read(url)!.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+        var f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard f.first == "F", f.count == 9 else { return String(line) }
+        f[5] = String(UInt64.max - n); f[8] = String(UInt64.max - n - 1); n += 2
+        return f.joined(separator: "\t")
+    }
+    try! lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+}
+
+/// macOS 15, exFAT drive: unplugged and plugged back in after a deploy (found 2026-11-18 by running the suite on macOS
+/// 15.7). Before: every mod file deployed during the last mount read as replaced — the whole game copied again on the
+/// next deploy, "changes not deployed" right after the replug.
+func temporaryInodeTests() {
+    section("macOS 15 exFAT: temporary inode numbers until the next mount")
+    let f = Fixture("temp-inodes")
+    _ = remountFixture(f)
+    try! f.kit.deploy()
+    useTemporaryInodes(f.kit)
+    check((try! f.kit.isDirty()) == false, "still deployed after the replug")
+    check(try! f.kit.deployer.verify().ok, "nothing reads as changed (\(try! f.kit.deployer.verify().changed.prefix(3)))")
+    check(f.kit.restoreDriftedBinaries().isEmpty, "Play copies nothing again")
+    let r = try! f.kit.deploy()
+    check(r.linked + r.cloned + r.copied + r.removed == 0 && r.keptModified.isEmpty,
+          "a deploy places nothing again (\(r.linked + r.cloned + r.copied) placed, \(r.removed) removed, \(r.keptModified.count) kept)")
+    let m = try! Manifest.load(f.kit.deployer.layout.manifestURL)
+    check(m.entries.values.allSatisfy { stableIno($0.srcIno) && $0.srcIno != 0 }, "the mods' real inode numbers are recorded once known")
+    check((try! f.kit.isDirty()) == false, "and it stays clean")
+
+    // real changes are still found
+    useTemporaryInodes(f.kit)
+    let tex = f.game.appendingPathComponent("Data/Textures/base/rock.dds")
+    try! fm.removeItem(at: tex); write(tex, "the player's own rock, bigger")
+    check(try! f.kit.deployer.verify().changed == ["Data/Textures/base/rock.dds"], "a replaced file is a change")
+    let pr = try! f.kit.deployer.purge()
+    check(pr.keptModified == ["Data/Textures/base/rock.dds"] && read(tex) == "the player's own rock, bigger", "purge keeps the player's file (\(pr.keptModified))")
+    check(!fm.fileExists(atPath: f.game.appendingPathComponent("Data/base.esp").path), "and removes ours")
+
+    // a temporary number is never taken as the same file
+    let st = lstatPath(f.game.appendingPathComponent("Data/Textures/base/rock.dds").path)!
+    let e = ManifestEntry(rel: "x", modID: "m", source: "/s", dev: st.dev, ino: UInt64.max, size: st.size + 1, mtimeNs: 0)
+    let same = FileStat(dev: st.dev, ino: UInt64.max, size: st.size, mtimeNs: 1, isDir: false)
+    check(!Deployer.sameFile(same, e, volume: st.dev), "equal temporary numbers (handed out again after a remount) don't match")
+    check(stableIno(9) && stableIno(UInt64(Int64.max)) && !stableIno(UInt64.max) && !stableIno(UInt64.max - 70_000), "stableIno")
 }
 
 /// The real thing: an APFS disk image mounted again while another image holds its disk number.

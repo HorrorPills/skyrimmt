@@ -66,6 +66,27 @@ func pandoraTests() {
     do { try k.runPandora() } catch { threw = true }
     check(threw, "failed run reports the error")
     check(read(f.game.appendingPathComponent("Data/meshes/actors/character/behaviors/0_master.hkx")) == before, "failed run keeps the old output deployed")
+    // crash at start, before Pandora writes its own log (#28: SIGSEGV in .NET start-up): the message names the signal
+    // and the console log that exists; the old output stays deployed — also when Pandora's own window was asked for
+    write(bin, "#!/bin/bash\necho 'Segmentation fault in coreclr_initialize' >&2\nkill -SEGV $$\n"); chmod(bin.path, 0o755)
+    let consoleLog = k.home.appendingPathComponent("logs/pandora-console.log")
+    try? fm.removeItem(at: k.home.appendingPathComponent("logs/pandora-engine.log"))
+    for interactive in [false, true] {
+        var message = ""
+        do { try k.runPandora(interactive: interactive) } catch { message = "\(error)" }
+        check(message.contains("crashed (signal 11)") && message.contains("logs/pandora-console.log"),
+              "crash at start reported\(interactive ? " (own window)" : ""): \(message)")
+        check((read(consoleLog) ?? "").contains("Segmentation fault in coreclr_initialize"), "console output kept in logs/pandora-console.log")
+        check(read(f.game.appendingPathComponent("Data/meshes/actors/character/behaviors/0_master.hkx")) == before, "crash keeps the old output deployed")
+    }
+    // a normal failure with Pandora's own log still points there
+    fakePandora(exit: 3)
+    var failMessage = ""
+    do { try k.runPandora() } catch { failMessage = "\(error)" }
+    check(failMessage.contains("stopped with code 3") && failMessage.contains("logs/pandora-engine.log"), "failure points to Pandora's log: \(failMessage)")
+    let leftovers = ((try? fm.contentsOfDirectory(atPath: k.home.appendingPathComponent("cache").path)) ?? []).filter { $0.hasPrefix("pandora-run-") }
+    check(leftovers.isEmpty, "no temporary run folders left (\(leftovers))")
+
     fakePandora()
     _ = try! k.runPandora()
     check(!k.pandoraNeedsRun(), "rerun fixes it")

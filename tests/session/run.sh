@@ -15,7 +15,13 @@ start() {   # $1 = real game folder, $2 = path to start the fake server by (defa
   for _ in 1 2 3 4 5 6 7 8 9 10; do lsof -t "$1/wine/bin/wineserver" 2>/dev/null | grep -qx "$LAST" && return; sleep 0.2; done
 }
 stop() { kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; }
-mk() { mkdir -p "$1/wine/bin" "$1/wine/lib/wine"; cp /bin/sleep "$1/wine/bin/wineserver"; codesign -f -s - "$1/wine/bin/wineserver" 2>/dev/null; }
+# The stand-in server: a plain arm64 "sleep". A re-signed copy of /bin/sleep (arm64e, a platform binary) is killed at
+# start on macOS 15 (exit 137), so build one when a compiler is there; SKYRIMMT_TEST_SLEEPER=<binary> supplies one
+# (a Mac without the developer tools), the copy of /bin/sleep is the last resort (fine on macOS 26+).
+SLEEPER=${SKYRIMMT_TEST_SLEEPER:-}
+if [ -z "$SLEEPER" ] && printf '#include <stdlib.h>\n#include <unistd.h>\nint main(int c, char **v) { sleep(c > 1 ? atoi(v[1]) : 1); return 0; }\n' |
+   cc -x c -arch arm64 -mmacosx-version-min=15.0 -o "$T/sleeper" - 2>/dev/null; then SLEEPER="$T/sleeper"; fi
+mk() { mkdir -p "$1/wine/bin" "$1/wine/lib/wine"; cp "${SLEEPER:-/bin/sleep}" "$1/wine/bin/wineserver"; codesign -f -s - "$1/wine/bin/wineserver" 2>/dev/null; }
 
 echo "== wineserver detection"
 for name in "plain/skyrim" "Game (SSD)+[1]/skyrim" "with space/sky rim"; do

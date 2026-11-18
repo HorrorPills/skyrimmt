@@ -87,6 +87,55 @@ sweep_mac_metadata() {
   return 0
 }
 
+# Game language (issue #27). Steam's per-game language setting installs that language's Skyrim_Default.ini (sLanguage,
+# its Voices_xx0.bsa, its font file) and voices; the Bethesda launcher, which Steam's Play button runs and SkyrimMT
+# skips, then brings My Games/Skyrim.ini in line by replacing it with that file. Here only those language values change
+# (the player's other settings stay), and only when the language Steam installed changed since the last start with
+# this Skyrim.ini — a language set by hand stays. A Skyrim.ini seen for the first time gets only a non-English Steam
+# language (an English Skyrim_Default.ini is Steam's default, not a choice). Profiles with their own INIs (MO2 /
+# Wabbajack imports, ModKit ProfileINIs.swift) each count as their own Skyrim.ini; the others share one.
+# Steam's own install only: version-switcher folders and GOG have their own files.
+sync_game_language() {
+  is_gog && return 0
+  [ "$GAMEDIR" = "$STEAM_GAMEDIR" ] || return 0
+  . "$SKYRIMMT_ROOT/scripts/ini.sh"
+  local def="$GAMEDIR/Skyrim_Default.ini" mark="$SKYRIM_HOME/config/game-language" ini want last have voices list new fc curfc
+  local prof key='*' pat='^interface\\fontconfig_[a-z]+\.txt$'
+  [ -f "$def" ] || return 0
+  want=$(ini_get "$def" General sLanguage | tr 'a-z' 'A-Z') || return 0
+  [ -n "$want" ] || return 0
+  prof=$(head -1 "$SKYRIM_HOME/config/modkit/current-profile" 2>/dev/null)
+  if [ -n "$prof" ] && ls "$SKYRIM_HOME/profiles/$prof/ini" 2>/dev/null | grep -qiE '^skyrim(prefs|custom)?\.ini$'; then key=$prof; fi
+  last=$(awk -F'\t' -v k="$key" '$1 == k { v = $2 } END { print v }' "$mark" 2>/dev/null)
+  [ "$want" = "$last" ] && return 0
+  _skmt_lang_remember() { mkdir -p "$SKYRIM_HOME/config"; { awk -F'\t' -v k="$key" '$1 != k' "$mark" 2>/dev/null; printf '%s\t%s\n' "$key" "$want"; } > "$mark.new" && mv -f "$mark.new" "$mark"; }
+  if [ -z "$last" ] && [ "$want" = ENGLISH ]; then _skmt_lang_remember; return 0; fi
+  ini=$(/usr/bin/find "$MYGAMES_DIR" -maxdepth 1 -iname Skyrim.ini -type f 2>/dev/null | head -1)
+  if [ -z "$ini" ]; then   # none yet (the launcher never ran): what the launcher would put there
+    mkdir -p "$MYGAMES_DIR" && cp "$def" "$MYGAMES_DIR/Skyrim.ini" && _skmt_lang_remember
+    echo "game language: $want (Skyrim.ini from Skyrim_Default.ini)"; return 0
+  fi
+  have=$(ini_get "$ini" General sLanguage | tr 'a-z' 'A-Z')
+  [ "$have" = "$want" ] || ini_set "$ini" General sLanguage "$want"
+  voices=$(ini_get "$def" Archive sResourceArchiveList2 | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -i -m1 '^Skyrim - Voices_.*\.bsa$')
+  list=$(ini_get "$ini" Archive sResourceArchiveList2)
+  if [ -n "$voices" ] && [ -n "$list" ]; then   # the voice archive in the list, everything else as it is
+    new=$(printf '%s' "$list" | tr ',' '\n' | sed 's/^ *//; s/ *$//' |
+      awk -v V="$voices" 'tolower($0) ~ /^skyrim - voices_.*\.bsa$/ { $0 = V } { printf "%s%s", (NR > 1 ? ", " : ""), $0 }')
+    [ "$(echo "$new" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$list" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | paste -sd, - | sed 's/,/, /g' | tr 'A-Z' 'a-z')" ] ||
+      ini_set "$ini" Archive sResourceArchiveList2 "$new"
+  fi
+  # the language's fonts (Cyrillic, CJK): Interface\FontConfig_xx.txt, none for English. A font file set otherwise (a
+  # font mod, the player) is left alone.
+  fc=$(ini_get "$def" Fonts sFontConfigFile); curfc=$(ini_get "$ini" Fonts sFontConfigFile)
+  if [ -z "$curfc" ] || printf '%s' "$curfc" | grep -qiE "$pat"; then
+    if [ -n "$fc" ]; then [ "$curfc" = "$fc" ] || ini_set "$ini" Fonts sFontConfigFile "$fc"
+    elif [ -n "$curfc" ]; then ini_del "$ini" Fonts sFontConfigFile; fi
+  fi
+  _skmt_lang_remember
+  echo "game language: ${have:-?} → $want (Steam's language setting)"
+}
+
 stop_idle_wine() {
   server_up || return 0
   local p name

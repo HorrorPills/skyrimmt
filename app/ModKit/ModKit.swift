@@ -354,12 +354,15 @@ extension ModKit {
     /// runtime data written into the file (2026-10-19: ScrambledBugs.dll / VendorRespawnFix.dll /
     /// ScriptEffectArchetypeCrashFix.dll, one .data byte 0 → 2 after a launch) — carried into the next start that state
     /// can change how the plugin behaves. Play calls this first; the mods' own copies are never affected (APFS clones).
+    /// Deployed program files and plugins that something deleted are put back too (another tool's updater, a cleanup):
+    /// the deploy manifest still lists them, so a deploy alone wouldn't, and the game would start without them.
     @discardableResult
     public func restoreDriftedBinaries() -> [String] {
-        // only program files are checked (a few thousand stats instead of every deployed file: Play stays instant)
+        // only program files and plugins are checked (a few thousand stats instead of every deployed file: Play stays instant)
         let isBin = { (k: String) in ["dll", "exe", "bsa"].contains((k as NSString).pathExtension.lowercased()) }
-        guard let v = try? deployer.verify(only: isBin) else { return [] }
-        let bins = v.changed.filter(isBin)
+        let isPlugin = { (k: String) in ["esp", "esm", "esl"].contains((k as NSString).pathExtension.lowercased()) }
+        guard let v = try? deployer.verify(only: { isBin($0) || isPlugin($0) }) else { return [] }
+        let bins = v.changed.filter(isBin) + v.missing
         guard !bins.isEmpty, let done = try? deployer.restore(bins, keepBackup: false) else { return [] }
         let log = home.appendingPathComponent("logs/drift.log")
         let line = ISO8601DateFormatter().string(from: Date()) + "\trestored\t" + done.joined(separator: ", ") + "\n"

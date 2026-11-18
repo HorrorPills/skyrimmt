@@ -60,6 +60,10 @@ func remountTests() {
     check(Set(v.changed) == ["Data/SKSE/Plugins/base.ini", "Data/SKSE/Plugins/base.dll"], "a rewritten file and an edited one are changes (\(v.changed))")
     check(f.kit.restoreDriftedBinaries() == ["Data/SKSE/Plugins/base.dll"], "Play puts back only the edited DLL")
     check(read(dll) == "dll", "the mod's DLL is back")
+    let esp = f.game.appendingPathComponent("Data/base.esp")   // deleted by something else (another tool's updater)
+    check(fm.fileExists(atPath: esp.path), "the plugin is deployed")
+    try? fm.removeItem(at: esp)
+    check(f.kit.restoreDriftedBinaries() == ["Data/base.esp"] && fm.fileExists(atPath: esp.path), "Play puts back a deleted plugin")
 
     // purge after a remount gives back the vanilla game
     f = Fixture("remount-purge")
